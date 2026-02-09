@@ -2,7 +2,7 @@ import os
 import json
 import asyncio
 import websockets
-from db import get_agent_prompt
+from db import get_agent_prompt, init_db
 from prompt_api import router as prompt_router
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -18,6 +18,8 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 PORT = int(os.getenv("PORT", 5050))
 TEMPERATURE = float(os.getenv("TEMPERATURE", 0.8))
+
+init_db()
 
 SYSTEM_MESSAGE = (
     "You are a helpful and bubbly AI assistant who loves to chat about "
