@@ -1,5 +1,5 @@
 import sqlite3
-
+import json
 DB_PATH = "app.db"
 
 
@@ -16,11 +16,24 @@ def init_db():
     """)
     cur.execute("""
     CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      tenant_phone TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        tenant_phone TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS agents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_user_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        business_name TEXT,
+        system_prompt TEXT,
+        voice TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(owner_user_id) REFERENCES users(id)
     )
     """)
 
@@ -122,3 +135,232 @@ def verify_user(email: str, password: str):
         "tenant_phone": tenant_phone
     }
 
+def create_agent(
+    owner_user_id: int,
+    name: str,
+    phone_number: str = None,
+    system_prompt: str = "",
+    business_name: str = None,
+    voice: str = None,
+    provider: str = None,
+    first_message: str = None,
+    tools: dict = None,   # example: {"google_calendar": True, "slack": False}
+):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    tools_json = json.dumps(tools or {})
+
+    cur.execute(
+        """
+        INSERT INTO agents (
+            owner_user_id,
+            name,
+            business_name,
+            phone_number,
+            system_prompt,
+            voice,
+            provider,
+            first_message,
+            tools_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            owner_user_id,
+            name,
+            business_name,
+            phone_number,
+            system_prompt,
+            voice,
+            provider,
+            first_message,
+            tools_json,
+        )
+    )
+
+    conn.commit()
+    agent_id = cur.lastrowid
+    conn.close()
+    return agent_id
+
+def list_agents(owner_user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT
+            id,
+            name,
+            business_name,
+            phone_number,
+            system_prompt,
+            voice,
+            provider,
+            first_message,
+            tools_json,
+            created_at,
+            updated_at
+        FROM agents
+        WHERE owner_user_id = ?
+        ORDER BY id DESC
+        """,
+        (owner_user_id,)
+    )
+
+    rows = cur.fetchall()
+    conn.close()
+
+    agents = []
+    for r in rows:
+        tools_raw = r[8] or "{}"
+        try:
+            tools = json.loads(tools_raw)
+        except Exception:
+            tools = {}
+
+        agents.append({
+            "id": r[0],
+            "name": r[1],
+            "business_name": r[2],
+            "phone_number": r[3],
+            "system_prompt": r[4],
+            "voice": r[5],
+            "provider": r[6],
+            "first_message": r[7],
+            "tools": tools,          # returned as dict
+            "created_at": r[9],
+            "updated_at": r[10],
+        })
+
+    return agents
+
+def get_agent(owner_user_id: int, agent_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT
+            id,
+            owner_user_id,
+            name,
+            business_name,
+            phone_number,
+            system_prompt,
+            voice,
+            provider,
+            first_message,
+            tools_json,
+            created_at,
+            updated_at
+        FROM agents
+        WHERE id = ? AND owner_user_id = ?
+        """,
+        (agent_id, owner_user_id)
+    )
+
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    tools_raw = row[9] or "{}"
+    try:
+        tools = json.loads(tools_raw)
+    except Exception:
+        tools = {}
+
+    return {
+        "id": row[0],
+        "owner_user_id": row[1],
+        "name": row[2],
+        "business_name": row[3],
+        "phone_number": row[4],
+        "system_prompt": row[5],
+        "voice": row[6],
+        "provider": row[7],
+        "first_message": row[8],
+        "tools": tools,
+        "created_at": row[10],
+        "updated_at": row[11],
+    }
+
+def update_agent(owner_user_id: int, agent_id: int, **fields):
+    # Allowed fields that can be updated from the UI
+    allowed = {
+        "name",
+        "business_name",
+        "phone_number",
+        "system_prompt",
+        "voice",
+        "provider",
+        "first_message",
+        "tools_json",   # store JSON string
+    }
+
+    updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+
+    # If UI passes tools as dict, convert to tools_json string
+    if "tools" in fields and fields["tools"] is not None:
+        updates["tools_json"] = json.dumps(fields["tools"])
+
+    if not updates:
+        return False  # nothing to update
+
+    set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
+    params = list(updates.values())
+    params += [agent_id, owner_user_id]
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute(
+        f"""
+        UPDATE agents
+        SET {set_clause},
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND owner_user_id = ?
+        """,
+        params
+    )
+
+    conn.commit()
+    changed = cur.rowcount > 0
+    conn.close()
+    return changed
+
+def get_agent_by_phone(phone_number: str):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT *
+        FROM agents
+        WHERE phone_number = ?
+        LIMIT 1
+    """, (phone_number,))
+
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    return {
+        "id": row[0],
+        "owner_user_id": row[1],
+        "name": row[2],
+        "business_name": row[3],
+        "system_prompt": row[4],
+        "voice": row[5],
+        "created_at": row[6],
+        "updated_at": row[7],
+        "phone_number": row[8],
+        "provider": row[9],
+        "first_message": row[10],
+        "tools_json": row[11],
+        "settings_json": row[12],
+    }

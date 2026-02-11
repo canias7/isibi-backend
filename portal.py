@@ -1,59 +1,143 @@
-from fastapi import APIRouter, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from typing import Optional, List, Dict, Any
+from auth_routes import verify_token  # your JWT verify function
+from db import create_agent, list_agents, get_agent, update_agent  # the functions you added in db.py
 
-router = APIRouter()
+router = APIRouter(prefix="/api", tags=["portal"])
 
-@router.get("/portal", response_class=HTMLResponse)
-async def portal_home():
-    return RedirectResponse("/portal/login", status_code=302)
+# ---------- Models ----------
 
-@router.get("/portal/login", response_class=HTMLResponse)
-async def portal_login_page():
-    return """
-<!doctype html>
-<html>
-<head><meta charset="utf-8"/><title>Customer Login</title></head>
-<body style="font-family:Arial; max-width:520px; margin:60px auto;">
-  <h1>Customer Login</h1>
-  <form method="POST" action="/portal/login">
-    <label>Email</label><br/>
-    <input name="email" required style="width:100%;padding:10px;margin-top:6px;"/><br/><br/>
-    <label>Password</label><br/>
-    <input name="password" type="password" required style="width:100%;padding:10px;margin-top:6px;"/><br/><br/>
-    <button style="width:100%;padding:12px;">Login</button>
-  </form>
-</body>
-</html>
-"""
+class ToolsModel(BaseModel):
+    google_calendar: Optional[Dict[str, Any]] = None
+    slack: Optional[Dict[str, Any]] = None
 
-@router.post("/portal/login")
-async def portal_login_submit(email: str = Form(...), password: str = Form(...)):
-    # TEMP: just redirect for now (we’ll hook real auth next)
-    return HTMLResponse(f"<h3>Logged in (placeholder)</h3><p>{email}</p><p><a href='/portal'>Back</a></p>")
+class CreateAgentRequest(BaseModel):
+    # phone number section
+    phone_number: Optional[str] = None
 
-@router.get("/portal/dashboard", response_class=HTMLResponse)
-async def portal_dashboard():
-    return """
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8"/>
-  <title>Customer Dashboard</title>
-  <style>
-    body { font-family: Arial; max-width: 900px; margin: 40px auto; }
-    a { display:block; margin: 10px 0; font-size: 18px; }
-  </style>
-</head>
-<body>
+    # assistant section
+    business_name: Optional[str] = None
+    assistant_name: str  # required
+    first_message: Optional[str] = None
+    system_prompt: Optional[str] = None
+    provider: Optional[str] = None
 
-  <h1>Customer Dashboard</h1>
+    # voice section
+    voice: Optional[str] = None
 
-  <p>Welcome to your AI control panel.</p>
+    # tools section
+    tools: Optional[ToolsModel] = None
 
-  <a href="/admin">Admin Prompt Builder</a>
-  <a href="/docs">API Docs</a>
-  <a href="/portal/logout">Logout</a>
+class UpdateAgentRequest(BaseModel):
+    phone_number: Optional[str] = None
+    business_name: Optional[str] = None
+    assistant_name: Optional[str] = None
+    first_message: Optional[str] = None
+    system_prompt: Optional[str] = None
+    provider: Optional[str] = None
+    voice: Optional[str] = None
+    tools: Optional[ToolsModel] = None
 
-</body>
-</html>
-"""
+class AgentOut(BaseModel):
+    id: int
+    assistant_name: str
+    business_name: Optional[str] = None
+    phone_number: Optional[str] = None
+    first_message: Optional[str] = None
+    system_prompt: Optional[str] = None
+    provider: Optional[str] = None
+    voice: Optional[str] = None
+    tools: Optional[Dict[str, Any]] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+# ---------- Routes ----------
+
+@router.get("/agents", response_model=List[AgentOut])
+def api_list_agents(user=Depends(verify_token)):
+    owner_user_id = user["id"]
+    agents = list_agents(owner_user_id)
+
+    # map DB keys -> API keys
+    return [
+        {
+            "id": a["id"],
+            "assistant_name": a["name"],
+            "business_name": a.get("business_name"),
+            "phone_number": a.get("phone_number"),
+            "first_message": a.get("first_message"),
+            "system_prompt": a.get("system_prompt"),
+            "provider": a.get("provider"),
+            "voice": a.get("voice"),
+            "tools": a.get("tools"),
+            "created_at": a.get("created_at"),
+            "updated_at": a.get("updated_at"),
+        }
+        for a in agents
+    ]
+
+
+@router.post("/agents")
+def api_create_agent(payload: CreateAgentRequest, user=Depends(verify_token)):
+    owner_user_id = user["id"]
+
+    agent_id = create_agent(
+        owner_user_id=owner_user_id,
+        name=payload.assistant_name,
+        business_name=payload.business_name,
+        phone_number=payload.phone_number,
+        first_message=payload.first_message,
+        system_prompt=payload.system_prompt,
+        provider=payload.provider,
+        voice=payload.voice,
+        tools=(payload.tools.model_dump() if payload.tools else {}),
+    )
+
+    return {"ok": True, "agent_id": agent_id}
+
+
+@router.get("/agents/{agent_id}", response_model=AgentOut)
+def api_get_agent(agent_id: int, user=Depends(verify_token)):
+    owner_user_id = user["id"]
+    a = get_agent(owner_user_id, agent_id)
+    if not a:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    return {
+        "id": a["id"],
+        "assistant_name": a["name"],
+        "business_name": a.get("business_name"),
+        "phone_number": a.get("phone_number"),
+        "first_message": a.get("first_message"),
+        "system_prompt": a.get("system_prompt"),
+        "provider": a.get("provider"),
+        "voice": a.get("voice"),
+        "tools": a.get("tools"),
+        "created_at": a.get("created_at"),
+        "updated_at": a.get("updated_at"),
+    }
+
+
+@router.patch("/agents/{agent_id}")
+def api_update_agent(agent_id: int, payload: UpdateAgentRequest, user=Depends(verify_token)):
+    owner_user_id = user["id"]
+
+    changed = update_agent(
+        owner_user_id,
+        agent_id,
+        name=payload.assistant_name,  # map UI -> DB
+        business_name=payload.business_name,
+        phone_number=payload.phone_number,
+        first_message=payload.first_message,
+        system_prompt=payload.system_prompt,
+        provider=payload.provider,
+        voice=payload.voice,
+        tools=(payload.tools.model_dump() if payload.tools else None),
+    )
+
+    if not changed:
+        return {"ok": True, "updated": False}
+
+    return {"ok": True, "updated": True}

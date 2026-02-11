@@ -9,9 +9,13 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.websockets import WebSocketDisconnect
 from twilio.twiml.voice_response import VoiceResponse, Connect
 from dotenv import load_dotenv
-from admin_ui import router as admin_router
 from auth_routes import router as auth_router
 from portal import router as portal_router
+from db import create_agent, list_agents, get_agent_by_phone
+from pydantic import BaseModel
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from auth import verify_token
 
 load_dotenv()
 
@@ -44,6 +48,7 @@ LOG_EVENT_TYPES = {
 }
 
 app = FastAPI()
+init_db()
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -56,7 +61,6 @@ app.add_middleware(
 )
 
 app.include_router(prompt_router)
-app.include_router(admin_router)
 app.include_router(auth_router)
 app.include_router(portal_router)
 
@@ -91,7 +95,8 @@ async def home():
 @app.api_route("/incoming-call", methods=["GET", "POST"])
 async def handle_incoming_call(request: Request):
     form = await request.form()
-    to_number = form.get("To")
+    to_number = form.get("To")          # your Twilio number (the business line)
+    from_number = form.get("From")      # caller's number
     tenant_phone = to_number
     print("Incoming call TO:", to_number)
 
@@ -160,8 +165,20 @@ async def handle_media_stream(websocket: WebSocket):
     """
     await websocket.accept()
     tenant = websocket.query_params.get("tenant")
-    db_prompt = get_agent_prompt(tenant) if tenant else None
-    instructions = db_prompt or SYSTEM_MESSAGE
+
+    agent = get_agent_by_phone(tenant) if tenant else None
+
+    instructions = (
+        agent["system_prompt"]
+        if agent and agent.get("system_prompt")
+        else SYSTEM_MESSAGE
+    )
+
+    voice = agent.get("voice") if agent else None
+    tools = json.loads(agent["tools_json"]) if agent and agent.get("tools_json") else None
+    provider = agent.get("provider") if agent else None
+    first_message = agent.get("first_message") if agent else None
+    settings = json.loads(agent["settings_json"]) if agent and agent.get("settings_json") else {}
 
     print("Tenant:", tenant)
     print("Using DB prompt:", bool(db_prompt))
@@ -180,7 +197,7 @@ async def handle_media_stream(websocket: WebSocket):
         },
     ) as openai_ws:
         await initialize_session(openai_ws, instructions=instructions)
-
+            
         stream_sid = None
         latest_media_timestamp = 0
         last_assistant_item = None
@@ -338,7 +355,7 @@ async def handle_media_stream(websocket: WebSocket):
         await asyncio.gather(receive_from_twilio(), send_to_twilio())
 
 
-async def initialize_session(openai_ws, instructions: str):
+async def initialize_session(openai_ws, instructions: str, voice: str | None = None, tools: dict | None = None, first_message: str | None = None):
     """
     Configure OpenAI Realtime session for Twilio Media Streams (G.711 u-law).
     """
@@ -348,12 +365,22 @@ async def initialize_session(openai_ws, instructions: str):
             "modalities": ["audio", "text"],
             "input_audio_format": "g711_ulaw",
             "output_audio_format": "g711_ulaw",
-            "voice": VOICE,
+            "voice": voice or VOICE,
             "instructions": instructions,
             "turn_detection": {"type": "server_vad"},
         },
     }
     await openai_ws.send(json.dumps(session_update))
+    
+    if first_message:
+        await openai_ws.send(json.dumps({
+            "type": "conversation.item.create",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": first_message}]
+        }
+    }))
 
 
 if __name__ == "__main__":
