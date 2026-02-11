@@ -23,8 +23,6 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 PORT = int(os.getenv("PORT", 5050))
 TEMPERATURE = float(os.getenv("TEMPERATURE", 0.8))
 
-init_db()
-
 SYSTEM_MESSAGE = (
     "You are a helpful and bubbly AI assistant who loves to chat about "
     "anything the user is interested in and is prepared to offer them facts. "
@@ -48,7 +46,10 @@ LOG_EVENT_TYPES = {
 }
 
 app = FastAPI()
-init_db()
+
+@app.on_event("startup")
+async def startup_event():
+    init_db()
 
 from fastapi.middleware.cors import CORSMiddleware
 

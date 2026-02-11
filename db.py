@@ -1,10 +1,26 @@
 import sqlite3
 import json
-DB_PATH = "app.db"
+import os
 
+DB_PATH = os.getenv("DB_PATH", "app.db")
+
+def get_conn():
+    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=30000;")
+    return conn
+
+def add_column_if_missing(conn, table, column, coltype):
+    cur = conn.cursor()
+    cur.execute(f"PRAGMA table_info({table})")
+    cols = [row[1] for row in cur.fetchall()]
+    if column not in cols:
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+        conn.commit()
 
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cur = conn.cursor()
 
     cur.execute("""
@@ -37,6 +53,9 @@ def init_db():
     )
     """)
 
+    # migrate old Render DBs:
+    add_column_if_missing(conn, "agents", "phone_number", "TEXT")
+    
     conn.commit()
     conn.close()
 
@@ -364,3 +383,4 @@ def get_agent_by_phone(phone_number: str):
         "tools_json": row[11],
         "settings_json": row[12],
     }
+
