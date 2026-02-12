@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from auth import verify_token
+from twilio.twiml.voice_response import VoiceResponse, Connect, Stream
 
 load_dotenv()
 
@@ -46,6 +47,28 @@ LOG_EVENT_TYPES = {
 }
 
 app = FastAPI()
+
+@app.post("/incoming-call")
+async def incoming_call(request: Request):
+    form = await request.form()
+
+    # Twilio sends the number that was called in "To"
+    called_number = form.get("To")  # ex: "+1704xxxxxxx"
+
+    agent = get_agent_by_phone(called_number)
+
+    response = VoiceResponse()
+
+    if not agent:
+        response.say("No agent is configured for this phone number.")
+        return HTMLResponse(str(response), media_type="application/xml")
+
+    # Start Twilio Media Stream to your WebSocket endpoint
+    connect = Connect()
+    connect.stream(url="wss://isibi-backend.onrender.com/media-stream")
+    response.append(connect)
+
+    return HTMLResponse(str(response), media_type="application/xml")
 
 @app.on_event("startup")
 async def startup_event():
