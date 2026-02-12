@@ -51,20 +51,23 @@ app = FastAPI()
 @app.post("/incoming-call")
 async def incoming_call(request: Request):
     form = await request.form()
+    called_number = form.get("To")   # THIS is the key
+    from_number = form.get("From")
 
-    called_number = form.get("To")
-    print("TWILIO To:", called_number)
+    print("TWILIO To:", called_number, "From:", from_number)
 
-    response = VoiceResponse()
-    response.say("Test response")
-    return HTMLResponse(str(response), media_type="application/xml")
+    agent = get_agent_by_phone(called_number)  # your db function
+    if not agent:
+        vr = VoiceResponse()
+        vr.say("No agent is configured on this number.")
+        return HTMLResponse(str(vr), media_type="application/xml")
 
-    # Start Twilio Media Stream to your WebSocket endpoint
+    # IMPORTANT: pass something real (agent id or tenant phone) to media-stream
+    vr = VoiceResponse()
     connect = Connect()
-    connect.stream(url="wss://isibi-backend.onrender.com/media-stream")
-    response.append(connect)
-
-    return HTMLResponse(str(response), media_type="application/xml")
+    connect.stream(url=f"wss://{request.url.hostname}/media-stream?agent_id={agent['id']}")
+    vr.append(connect)
+    return HTMLResponse(str(vr), media_type="application/xml")
 
 @app.on_event("startup")
 async def startup_event():
