@@ -225,7 +225,6 @@ async def handle_media_stream(websocket: WebSocket):
     db_prompt = get_agent_prompt(agent_id)
 
     print("Using DB prompt:", bool(db_prompt))
-    print("Tenant:", tenant)
     print("✅ Twilio WS connected")
 
     # OpenAI Realtime websocket
