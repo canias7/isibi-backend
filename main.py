@@ -48,7 +48,7 @@ LOG_EVENT_TYPES = {
 
 app = FastAPI()
 
-@app.post("/incoming-call")
+@app.api_route("/incoming-call", methods=["GET", "POST"])
 async def incoming_call(request: Request):
     form = await request.form()
     called_number = form.get("To")   # THIS is the key
