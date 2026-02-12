@@ -4,11 +4,11 @@ import os
 
 DB_PATH = os.getenv("DB_PATH", "app.db")
 def get_conn():
-    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA busy_timeout=30000;")
-    return conn
+    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=30000;")
+    return conn
 
 def add_column_if_missing(conn, table, column, coltype):
     cur = conn.cursor()
@@ -50,7 +50,7 @@ def init_db():
         phone_number TEXT,
         assistant_name TEXT,
         first_message TEXT,
-        tools TEXT,
+        tools_json TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(owner_user_id) REFERENCES users(id)
@@ -65,7 +65,7 @@ def init_db():
     add_column_if_missing(conn, "agents", "assistant_name", "TEXT")
     add_column_if_missing(conn, "agents", "system_prompt", "TEXT")
     add_column_if_missing(conn, "agents", "voice", "TEXT")
-    add_column_if_missing(conn, "agents", "tools", "TEXT")  # store JSON as TEXT
+    add_column_if_missing(conn, "agents", "tools_json", "TEXT")  # store JSON as TEXT
     
     conn.commit()
     conn.close()
