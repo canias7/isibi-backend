@@ -394,3 +394,10 @@ def get_agent_by_phone(phone_number: str):
         "settings_json": row[12],
     }
 
+def get_agent_by_phone(phone_number: str):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM agents WHERE phone_number = ?", (phone_number,))
+    row = cur.fetchone()
+    conn.close()
+    return row
