@@ -201,17 +201,15 @@ async def handle_media_stream(websocket: WebSocket):
         except Exception as e:
             print("ERROR loading agent:", e)
             agent = None 
-            
 
     print("WS agent_id:", agent_id)
     print("WS agent found:", bool(agent))
     if agent:
-        print(
-            "Using agent:",
-            agent.get("name"),
-            "prompt_len:",
-            len(agent.get("system_prompt") or "")
-        )
+        print("WS system_prompt len:", len(agent.get("system_prompt") or ""))
+        print("WS first_message:", agent.get("first_message"))
+        print("WS voice:", agent.get("voice"))
+        print("WS provider:", agent.get("provider"))
+        print("WS tools_json present:", bool(agent.get("tools_json")))
 
     instructions = (
         agent["system_prompt"]
