@@ -66,7 +66,7 @@ async def incoming_call(request: Request):
     # IMPORTANT: pass something real (agent id or tenant phone) to media-stream
     vr = VoiceResponse()
     connect = Connect()
-    connect.stream(url=f"wss://{request.url.hostname}/media-stream?agent_id={agent['id']}")
+    connect.stream(url=f"wss://{request.url.hostname}/media-stream?tenant={called_number}")
     vr.append(connect)
     return HTMLResponse(str(vr), media_type="application/xml")
 
@@ -203,9 +203,11 @@ async def handle_media_stream(websocket: WebSocket):
     provider = agent.get("provider") if agent else None
     first_message = agent.get("first_message") if agent else None
     settings = json.loads(agent["settings_json"]) if agent and agent.get("settings_json") else {}
+    agent_id = websocket.query_params.get("agent_id")
+    db_prompt = get_agent_prompt(agent_id)
 
-    print("Tenant:", tenant)
     print("Using DB prompt:", bool(db_prompt))
+    print("Tenant:", tenant)
     print("✅ Twilio WS connected")
 
     # OpenAI Realtime websocket
