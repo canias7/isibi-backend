@@ -52,16 +52,12 @@ app = FastAPI()
 async def incoming_call(request: Request):
     form = await request.form()
 
-    # Twilio sends the number that was called in "To"
-    called_number = form.get("To")  # ex: "+1704xxxxxxx"
-
-    agent = get_agent_by_phone(called_number)
+    called_number = form.get("To")
+    print("TWILIO To:", called_number)
 
     response = VoiceResponse()
-
-    if not agent:
-        response.say("No agent is configured for this phone number.")
-        return HTMLResponse(str(response), media_type="application/xml")
+    response.say("Test response")
+    return HTMLResponse(str(response), media_type="application/xml")
 
     # Start Twilio Media Stream to your WebSocket endpoint
     connect = Connect()
