@@ -54,7 +54,8 @@ async def incoming_call(request: Request):
     called_number = form.get("To")   # THIS is the key
     from_number = form.get("From")
 
-    print("TWILIO To:", called_number, "From:", from_number)
+    print("TWILIO To:", called_number)
+    print("TWILIO From:", from_number)
 
     agent = get_agent_by_phone(called_number)  # your db function
     if not agent:
