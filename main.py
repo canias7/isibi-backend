@@ -197,10 +197,11 @@ async def handle_media_stream(websocket: WebSocket):
     agent = None
     if agent_id:
         try:
-            agent_id_int = int(agent_id)
-            agent = get_agent_by_id(agent_id_int)
-        except:
-            agent = None
+            agent = get_agent_by_id(int(agent_id))
+        except Exception as e:
+            print("ERROR loading agent:", e)
+            agent = None 
+            
 
     print("WS agent_id:", agent_id)
     print("WS agent found:", bool(agent))
@@ -223,8 +224,7 @@ async def handle_media_stream(websocket: WebSocket):
     provider = agent.get("provider") if agent else None
     first_message = agent.get("first_message") if agent else None
     settings = json.loads(agent["settings_json"]) if agent and agent.get("settings_json") else {}
-    agent_id = websocket.query_params.get("agent_id")
-    db_prompt = get_agent_prompt(agent_id)
+    db_prompt = get_agent_prompt(agent_id)) if agent_id else None
 
     print("Using DB prompt:", bool(db_prompt))
     print("✅ Twilio WS connected")
