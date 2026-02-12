@@ -224,7 +224,7 @@ async def handle_media_stream(websocket: WebSocket):
     provider = agent.get("provider") if agent else None
     first_message = agent.get("first_message") if agent else None
     settings = json.loads(agent["settings_json"]) if agent and agent.get("settings_json") else {}
-    db_prompt = get_agent_prompt(agent_id)) if agent_id else None
+    db_prompt = get_agent_prompt(agent_id) if agent_id else None
 
     print("Using DB prompt:", bool(db_prompt))
     print("✅ Twilio WS connected")
