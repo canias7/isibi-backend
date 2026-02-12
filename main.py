@@ -2,7 +2,7 @@ import os
 import json
 import asyncio
 import websockets
-from db import get_agent_prompt, init_db
+from db import get_agent_prompt, init_db, get_agent_by_id
 from prompt_api import router as prompt_router
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -188,9 +188,27 @@ async def handle_media_stream(websocket: WebSocket):
     Twilio <-> OpenAI Realtime bridge.
     """
     await websocket.accept()
-    tenant = websocket.query_params.get("tenant")
 
-    agent = get_agent_by_phone(tenant) if tenant else None
+    agent_id = websocket.query_params.get("agent_id")
+
+    agent = None
+    if agent_id:
+        try:
+            agent_id_int = int(agent_id)
+            # You need a DB function that fetches agent by id:
+            agent = get_agent_by_id(agent_id_int)
+        except:
+            agent = None
+
+    print("WS agent_id:", agent_id)
+    print("WS agent found:", bool(agent))
+    if agent:
+        print(
+            "Using agent:",
+            agent.get("name"),
+            "prompt_len:",
+            len(agent.get("system_prompt") or "")
+        )
 
     instructions = (
         agent["system_prompt"]
@@ -223,7 +241,23 @@ async def handle_media_stream(websocket: WebSocket):
         },
     ) as openai_ws:
         await initialize_session(openai_ws, instructions=instructions)
-            
+
+
+        if first_message:
+            await openai_ws.send(json.dumps({
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": first_message}
+                    ]
+                }
+            }))
+            await openai_ws.send(json.dumps({
+                "type": "response.create"
+            }))
+ 
         stream_sid = None
         latest_media_timestamp = 0
         last_assistant_item = None
@@ -369,7 +403,7 @@ async def handle_media_stream(websocket: WebSocket):
                         print("🗣️ speech_started → interrupt")
                         await handle_speech_started_event()
 
-                    # ✅ When caller stops speaking, ask the model to respond
+                    # ✅ When caller stops speaking wait one second, ask the model to respond
                     if rtype == "input_audio_buffer.speech_stopped":
                         print("🛑 speech_stopped → commit + response.create")
                         await openai_ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
