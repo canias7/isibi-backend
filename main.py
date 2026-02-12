@@ -58,6 +58,7 @@ async def incoming_call(request: Request):
     print("TWILIO From:", from_number)
 
     agent = get_agent_by_phone(called_number)  # your db function
+    
     if not agent:
         vr = VoiceResponse()
         vr.say("No agent is configured on this number.")
@@ -66,7 +67,9 @@ async def incoming_call(request: Request):
     # IMPORTANT: pass something real (agent id or tenant phone) to media-stream
     vr = VoiceResponse()
     connect = Connect()
-    connect.stream(url=f"wss://{request.url.hostname}/media-stream?tenant={called_number}")
+    connect.stream(
+        url=f"wss://{request.url.hostname}/media-stream?agent_id={agent['id']}"
+    )    
     vr.append(connect)
     return HTMLResponse(str(vr), media_type="application/xml")
 
@@ -195,7 +198,6 @@ async def handle_media_stream(websocket: WebSocket):
     if agent_id:
         try:
             agent_id_int = int(agent_id)
-            # You need a DB function that fetches agent by id:
             agent = get_agent_by_id(agent_id_int)
         except:
             agent = None
