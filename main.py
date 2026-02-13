@@ -23,6 +23,7 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 PORT = int(os.getenv("PORT", 5050))
 TEMPERATURE = float(os.getenv("TEMPERATURE", 0.8))
+DOMAIN = os.getenv("DOMAIN", "localhost:5050")  # Your public domain or ngrok URL
 
 SYSTEM_MESSAGE = (
     "You are a helpful and bubbly AI assistant who loves to chat about "
@@ -64,11 +65,11 @@ async def incoming_call(request: Request):
         vr.say("No agent is configured on this number.")
         return HTMLResponse(str(vr), media_type="application/xml")
 
-    # IMPORTANT: pass something real (agent id or tenant phone) to media-stream
+    # Use DOMAIN environment variable for WebSocket URL
     vr = VoiceResponse()
     connect = Connect()
     connect.stream(
-        url=f"wss://{request.url.hostname}/media-stream?agent_id={agent['id']}"
+        url=f"wss://{DOMAIN}/media-stream?agent_id={agent['id']}"
     )    
     vr.append(connect)
     return HTMLResponse(str(vr), media_type="application/xml")
@@ -155,7 +156,7 @@ async def handle_media_stream(websocket: WebSocket):
     tools = json.loads(agent["tools_json"]) if agent and agent.get("tools_json") else None
     provider = agent.get("provider") if agent else None
     first_message = agent.get("first_message") if agent else None
-    settings = json.loads(agent["settings_json"]) if agent and agent.get("settings_json") else {}
+    # settings_json removed - column doesn't exist yet
     db_prompt = get_agent_prompt(agent_id) if agent_id else None
 
     print("Using DB prompt:", bool(db_prompt))

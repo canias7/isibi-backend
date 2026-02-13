@@ -66,6 +66,7 @@ def init_db():
     add_column_if_missing(conn, "agents", "system_prompt", "TEXT")
     add_column_if_missing(conn, "agents", "voice", "TEXT")
     add_column_if_missing(conn, "agents", "tools_json", "TEXT")  # store JSON as TEXT
+    add_column_if_missing(conn, "agents", "settings_json", "TEXT")  # for future use
     
     conn.commit()
     conn.close()
@@ -266,24 +267,15 @@ def list_agents(owner_user_id: int):
     return agents
 
 def get_agent(owner_user_id: int, agent_id: int):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()  # Uses row_factory = sqlite3.Row
     cur = conn.cursor()
 
     cur.execute(
         """
         SELECT
-            id,
-            owner_user_id,
-            name,
-            business_name,
-            phone_number,
-            system_prompt,
-            voice,
-            provider,
-            first_message,
-            tools_json,
-            created_at,
-            updated_at
+            id, owner_user_id, name, business_name, phone_number,
+            system_prompt, voice, provider, first_message, tools_json,
+            created_at, updated_at
         FROM agents
         WHERE id = ? AND owner_user_id = ?
         """,
@@ -296,26 +288,17 @@ def get_agent(owner_user_id: int, agent_id: int):
     if not row:
         return None
 
-    tools_raw = row[9] or "{}"
+    # Convert Row to dict
+    agent_dict = dict(row)
+    
+    # Parse tools_json if present
+    tools_raw = agent_dict.get("tools_json") or "{}"
     try:
-        tools = json.loads(tools_raw)
+        agent_dict["tools"] = json.loads(tools_raw)
     except Exception:
-        tools = {}
+        agent_dict["tools"] = {}
 
-    return {
-        "id": row[0],
-        "owner_user_id": row[1],
-        "name": row[2],
-        "business_name": row[3],
-        "phone_number": row[4],
-        "system_prompt": row[5],
-        "voice": row[6],
-        "provider": row[7],
-        "first_message": row[8],
-        "tools": tools,
-        "created_at": row[10],
-        "updated_at": row[11],
-    }
+    return agent_dict
 
 def update_agent(owner_user_id: int, agent_id: int, **fields):
     # Allowed fields that can be updated from the UI
