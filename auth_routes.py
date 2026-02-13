@@ -51,7 +51,8 @@ def login_user(payload: LoginRequest):
         "token_type": "bearer"
     }
 
-# -------------------------
+
+# -------------------------
 # JWT dependency for portal routes
 # -------------------------
 
