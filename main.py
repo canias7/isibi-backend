@@ -51,14 +51,52 @@ app = FastAPI()
 
 @app.post("/incoming-call")
 async def incoming_call(request: Request):
-    form = await request.form()
-    called_number = form.get("To")   # THIS is the key
-    from_number = form.get("From")
+    # Debug: Check content type and body
+    print("Content-Type:", request.headers.get("content-type"))
+    
+    # Try to get the raw body
+    try:
+        body = await request.body()
+        print("Raw body:", body.decode())
+    except Exception as e:
+        print("Error reading body:", e)
+    
+    # Twilio sends form data, not JSON
+    form_data = await request.form()
+    print("Form data keys:", list(form_data.keys()))
+    print("Raw form data:", dict(form_data))
+    
+    called_number = form_data.get("To")
+    from_number = form_data.get("From")
 
-    print("TWILIO To:", called_number)
+    print("=" * 50)
+    print("INCOMING CALL")
+    print("TWILIO To (raw):", called_number)
     print("TWILIO From:", from_number)
 
-    agent = get_agent_by_phone(called_number)  # your db function
+    # Try multiple phone number formats to match database
+    agent = None
+    if called_number:
+        # Try original format first
+        agent = get_agent_by_phone(called_number)
+        print(f"Lookup with '{called_number}':", bool(agent))
+        
+        # If not found, try without the + prefix
+        if not agent and called_number.startswith("+"):
+            no_plus = called_number[1:]
+            agent = get_agent_by_phone(no_plus)
+            print(f"Lookup with '{no_plus}':", bool(agent))
+        
+        # If not found, try with + prefix added
+        if not agent and not called_number.startswith("+"):
+            with_plus = f"+{called_number}"
+            agent = get_agent_by_phone(with_plus)
+            print(f"Lookup with '{with_plus}':", bool(agent))
+    
+    print("Agent found:", bool(agent))
+    if agent:
+        print("Agent ID:", agent.get('id'))
+    print("=" * 50)
     
     if not agent:
         vr = VoiceResponse()
