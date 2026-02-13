@@ -104,13 +104,19 @@ async def incoming_call(request: Request):
         return HTMLResponse(str(vr), media_type="application/xml")
 
     # Use DOMAIN environment variable for WebSocket URL
+    ws_url = f"wss://{DOMAIN}/media-stream?agent_id={agent['id']}"
+    print(f"WebSocket URL: {ws_url}")
+    print(f"DOMAIN env var: {DOMAIN}")
+    
     vr = VoiceResponse()
     connect = Connect()
-    connect.stream(
-        url=f"wss://{DOMAIN}/media-stream?agent_id={agent['id']}"
-    )    
+    connect.stream(url=ws_url)
     vr.append(connect)
-    return HTMLResponse(str(vr), media_type="application/xml")
+    
+    twiml_response = str(vr)
+    print(f"TwiML Response: {twiml_response}")
+    
+    return HTMLResponse(twiml_response, media_type="application/xml")
 
 @app.on_event("startup")
 async def startup_event():
@@ -163,7 +169,16 @@ async def handle_media_stream(websocket: WebSocket):
     """
     Twilio <-> OpenAI Realtime bridge.
     """
-    await websocket.accept()
+    print("=" * 50)
+    print("🔌 WebSocket connection attempt")
+    print("Query params:", dict(websocket.query_params))
+    
+    try:
+        await websocket.accept()
+        print("✅ WebSocket accepted")
+    except Exception as e:
+        print(f"❌ WebSocket accept failed: {e}")
+        raise
 
     agent_id = websocket.query_params.get("agent_id")
 
