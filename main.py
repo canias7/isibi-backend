@@ -109,6 +109,9 @@ async def incoming_call(request: Request):
 @app.on_event("startup")
 async def startup_event():
     init_db()
+    print("=" * 60)
+    print("🚀 APP STARTUP - VERSION: FIRST_MESSAGE_FIX_v2")
+    print("=" * 60)
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -123,6 +126,10 @@ app.add_middleware(
 app.include_router(prompt_router)
 app.include_router(auth_router)
 app.include_router(portal_router)
+
+print("📋 Registered routes:")
+for route in app.routes:
+    print(f"  - {route.path} ({route.methods if hasattr(route, 'methods') else 'WebSocket'})")
 
 if not OPENAI_API_KEY:
     raise ValueError("Missing OPENAI_API_KEY in .env")
@@ -157,6 +164,7 @@ async def handle_media_stream(websocket: WebSocket):
     """
     Twilio <-> OpenAI Realtime bridge.
     """
+    print("🚨🚨🚨 WEBSOCKET HANDLER STARTED 🚨🚨🚨")
     print("=" * 50)
     print("🔌 WebSocket connection attempt")
     print("Query params:", dict(websocket.query_params))
