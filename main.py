@@ -51,20 +51,8 @@ app = FastAPI()
 
 @app.post("/incoming-call")
 async def incoming_call(request: Request):
-    # Debug: Check content type and body
-    print("Content-Type:", request.headers.get("content-type"))
-    
-    # Try to get the raw body
-    try:
-        body = await request.body()
-        print("Raw body:", body.decode())
-    except Exception as e:
-        print("Error reading body:", e)
-    
     # Twilio sends form data, not JSON
     form_data = await request.form()
-    print("Form data keys:", list(form_data.keys()))
-    print("Raw form data:", dict(form_data))
     
     called_number = form_data.get("To")
     from_number = form_data.get("From")
