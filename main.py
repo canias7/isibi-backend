@@ -119,72 +119,6 @@ async def home():
     </html>
     """
 
-@app.api_route("/incoming-call", methods=["GET", "POST"])
-async def handle_incoming_call(request: Request):
-    form = await request.form()
-    to_number = form.get("To")          # your Twilio number (the business line)
-    from_number = form.get("From")      # caller's number
-    tenant_phone = to_number
-    print("Incoming call TO:", to_number)
-
-    vr = VoiceResponse()
-
-    vr.say(
-        "Please wait while we connect your call to the A I voice assistant.",
-        voice="Google.en-US-Chirp3-HD-Aoede",
-    )
-
-    vr.pause(length=1)
-
-    vr.say(
-        "O.K. you can start talking!",
-        voice="Google.en-US-Chirp3-HD-Aoede",
-    )
-
-    host = request.headers.get("host")
-
-    connect = Connect()
-    stream = connect.stream(url=f"wss://{host}/media-stream?tenant={to_number}")
-
-    if tenant_phone:
-        stream.parameter(name="tenant_phone", value=tenant_phone)
-
-    vr.append(connect)
-
-    # ✅ keep call alive
-    vr.pause(length=600)
-
-    return HTMLResponse(content=str(vr), media_type="application/xml")
-
-    """
-    Twilio webhook. Returns TwiML that starts a Media Stream to /media-stream.
-    We pass tenant_phone (the called number) via customParameters.
-    """
-    # Twilio usually POSTs form-encoded
-    form = await request.form()
-    tenant_phone = form.get("To")  # the Twilio number being called
-
-    vr = VoiceResponse()
-    vr.say(
-        "Please wait while we connect your call to the A I voice assistant.",
-        voice="Google.en-US-Chirp3-HD-Aoede",
-    )
-    vr.pause(length=1)
-    vr.say("O.K. you can start talking!", voice="Google.en-US-Chirp3-HD-Aoede")
-
-    # IMPORTANT: use Host header so we get the real ngrok domain, not localhost
-    host = request.headers.get("host")
-    connect = Connect()
-    stream = connect.stream(url=f"wss://{host}/media-stream?tenant={to_number}")
-
-    # Pass tenant identifier to websocket start event
-    if tenant_phone:
-        stream.parameter(name="tenant_phone", value=tenant_phone)
-
-    vr.append(connect)
-    return HTMLResponse(content=str(vr), media_type="application/xml")
-
-
 @app.websocket("/media-stream")
 async def handle_media_stream(websocket: WebSocket):
     """
@@ -239,7 +173,12 @@ async def handle_media_stream(websocket: WebSocket):
             "OpenAI-Beta": "realtime=v1",
         },
     ) as openai_ws:
-        await initialize_session(openai_ws, instructions=instructions)
+        await initialize_session(
+            openai_ws,
+            instructions=instructions,
+            voice=voice,
+            tools=tools
+        )
 
 
         if first_message:
@@ -429,20 +368,10 @@ async def initialize_session(openai_ws, instructions: str, voice: str | None = N
             "turn_detection": {"type": "server_vad"},
         },
     }
+
+    if tools:
+        session_update["session"]["tools"] = tools
+        
     await openai_ws.send(json.dumps(session_update))
     
-    if first_message:
-        await openai_ws.send(json.dumps({
-            "type": "conversation.item.create",
-            "item": {
-                "type": "message",
-                "role": "assistant",
-                "content": [{"type": "output_text", "text": first_message}]
-        }
-    }))
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    
