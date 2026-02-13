@@ -234,27 +234,12 @@ async def handle_media_stream(websocket: WebSocket):
             tools=tools
         )
 
-
-        if first_message:
-            await openai_ws.send(json.dumps({
-                "type": "conversation.item.create",
-                "item": {
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [
-                        {"type": "text", "text": first_message}
-                    ]
-                }
-            }))
-            await openai_ws.send(json.dumps({
-                "type": "response.create"
-            }))
- 
         stream_sid = None
         latest_media_timestamp = 0
         last_assistant_item = None
         mark_queue = []
         response_start_timestamp_twilio = None
+        first_message_sent = False  # Track if we've sent the greeting
 
         async def send_mark():
             if not stream_sid:
@@ -305,7 +290,7 @@ async def handle_media_stream(websocket: WebSocket):
             response_start_timestamp_twilio = None
 
         async def receive_from_twilio():
-            nonlocal stream_sid, latest_media_timestamp, response_start_timestamp_twilio, last_assistant_item
+            nonlocal stream_sid, latest_media_timestamp, response_start_timestamp_twilio, last_assistant_item, first_message_sent
 
             try:
                 async for message in websocket.iter_text():
@@ -323,6 +308,24 @@ async def handle_media_stream(websocket: WebSocket):
                         response_start_timestamp_twilio = None
                         latest_media_timestamp = 0
                         last_assistant_item = None
+                        
+                        # Send first message if configured
+                        if first_message and not first_message_sent:
+                            print(f"📢 Sending first message: {first_message}")
+                            await openai_ws.send(json.dumps({
+                                "type": "conversation.item.create",
+                                "item": {
+                                    "type": "message",
+                                    "role": "assistant",
+                                    "content": [
+                                        {"type": "input_text", "text": first_message}
+                                    ]
+                                }
+                            }))
+                            await openai_ws.send(json.dumps({
+                                "type": "response.create"
+                            }))
+                            first_message_sent = True
 
                     elif evt == "media":
                         # Track timestamp so truncation math works
