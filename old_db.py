@@ -4,11 +4,11 @@ import os
 
 DB_PATH = os.getenv("DB_PATH", "app.db")
 def get_conn():
-    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA busy_timeout=30000;")
-    return conn
+    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA busy_timeout=30000;")
+    return conn
 
 def add_column_if_missing(conn, table, column, coltype):
     cur = conn.cursor()
@@ -361,51 +361,18 @@ def update_agent(owner_user_id: int, agent_id: int, **fields):
     conn.close()
     return changed
 
-def get_agent_by_phone(phone_number: str):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT *
-        FROM agents
-        WHERE phone_number = ?
-        LIMIT 1
-    """, (phone_number,))
-
-    row = cur.fetchone()
-    conn.close()
-
-    if not row:
-        return None
-
-    return {
-        "id": row[0],
-        "owner_user_id": row[1],
-        "name": row[2],
-        "business_name": row[3],
-        "system_prompt": row[4],
-        "voice": row[5],
-        "created_at": row[6],
-        "updated_at": row[7],
-        "phone_number": row[8],
-        "provider": row[9],
-        "first_message": row[10],
-        "tools_json": row[11],
-        "settings_json": row[12],
-    }
-
-def get_agent_by_phone(phone_number: str):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM agents WHERE phone_number = ?", (phone_number,))
-    row = cur.fetchone()
-    conn.close()
-    return row
-
 def get_agent_by_id(agent_id: int):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("SELECT * FROM agents WHERE id = ?", (agent_id,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_agent_by_phone(phone_number: str):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM agents WHERE phone_number = ? LIMIT 1", (phone_number,))
     row = cur.fetchone()
     conn.close()
     return dict(row) if row else None
