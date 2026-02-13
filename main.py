@@ -201,6 +201,8 @@ async def handle_media_stream(websocket: WebSocket):
     db_prompt = get_agent_prompt(agent_id) if agent_id else None
 
     print("Using DB prompt:", bool(db_prompt))
+    print(f"🎤 first_message value: '{first_message}'")
+    print(f"🎤 first_message is truthy: {bool(first_message)}")
     print("✅ Twilio WS connected")
 
     # OpenAI Realtime websocket
@@ -300,13 +302,14 @@ async def handle_media_stream(websocket: WebSocket):
                         # Send first message if configured
                         if first_message and not first_message_sent:
                             print(f"📢 Sending first message: {first_message}")
+                            print(f"📢 first_message_sent flag before: {first_message_sent}")
                             await openai_ws.send(json.dumps({
                                 "type": "conversation.item.create",
                                 "item": {
                                     "type": "message",
                                     "role": "assistant",
                                     "content": [
-                                        {"type": "input_text", "text": first_message}
+                                        {"type": "text", "text": first_message}
                                     ]
                                 }
                             }))
@@ -314,6 +317,7 @@ async def handle_media_stream(websocket: WebSocket):
                                 "type": "response.create"
                             }))
                             first_message_sent = True
+                            print(f"📢 first_message_sent flag after: {first_message_sent}")
 
                     elif evt == "media":
                         # Track timestamp so truncation math works
