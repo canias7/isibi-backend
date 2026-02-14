@@ -64,8 +64,8 @@ async def incoming_call(request: Request):
 
     logger.info("=" * 50)
     logger.info("INCOMING CALL")
-    logger.info("TWILIO To (raw):", called_number)
-    logger.info("TWILIO From:", from_number)
+    logger.info(f"TWILIO To (raw): {called_number}")
+    logger.info(f"TWILIO From: {from_number}")
 
     # Try multiple phone number formats to match database
     agent = None
@@ -86,9 +86,9 @@ async def incoming_call(request: Request):
             agent = get_agent_by_phone(with_plus)
             print(f"Lookup with '{with_plus}':", bool(agent))
     
-    logger.info("Agent found:", bool(agent))
+    logger.info(f"Agent found: {bool(agent}"))
     if agent:
-        logger.info("Agent ID:", agent.get('id'))
+        logger.info(f"Agent ID: {agent.get('id'}"))
     logger.info("=" * 50)
     
     if not agent:
@@ -188,17 +188,17 @@ async def handle_media_stream(websocket: WebSocket):
         try:
             agent = get_agent_by_id(int(agent_id))
         except Exception as e:
-            logger.info("ERROR loading agent:", e)
+            logger.info(f"ERROR loading agent: {e}")
             agent = None 
 
-    logger.info("WS agent_id:", agent_id)
-    logger.info("WS agent found:", bool(agent))
+    logger.info(f"WS agent_id: {agent_id}")
+    logger.info(f"WS agent found: {bool(agent}"))
     if agent:
-        logger.info("WS system_prompt len:", len(agent.get("system_prompt") or ""))
-        logger.info("WS first_message:", agent.get("first_message"))
-        logger.info("WS voice:", agent.get("voice"))
-        logger.info("WS provider:", agent.get("provider"))
-        logger.info("WS tools_json present:", bool(agent.get("tools_json")))
+        logger.info(f"WS system_prompt len: {len(agent.get("system_prompt"}") or ""))
+        logger.info(f"WS first_message: {agent.get("first_message"}"))
+        logger.info(f"WS voice: {agent.get("voice"}"))
+        logger.info(f"WS provider: {agent.get("provider"}"))
+        logger.info(f"WS tools_json present: {bool(agent.get("tools_json"}")))
 
     instructions = (
         agent["system_prompt"]
@@ -213,7 +213,7 @@ async def handle_media_stream(websocket: WebSocket):
     # settings_json removed - column doesn't exist yet
     db_prompt = get_agent_prompt(agent_id) if agent_id else None
 
-    logger.info("Using DB prompt:", bool(db_prompt))
+    logger.info(f"Using DB prompt: {bool(db_prompt}"))
     print(f"🎤 first_message value: '{first_message}'")
     print(f"🎤 first_message is truthy: {bool(first_message)}")
     logger.info("✅ Twilio WS connected")
@@ -373,7 +373,7 @@ async def handle_media_stream(websocket: WebSocket):
                     rtype = resp.get("type")
 
                     if rtype in LOG_EVENT_TYPES:
-                        logger.info("OpenAI event:", rtype)
+                        logger.info(f"OpenAI event: {rtype}")
 
                     # 1) Stream audio back to Twilio
                     if rtype in ("response.output_audio.delta", "response.audio.delta"):
