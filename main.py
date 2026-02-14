@@ -97,13 +97,16 @@ async def incoming_call(request: Request):
         return HTMLResponse(str(vr), media_type="application/xml")
 
     # Use DOMAIN environment variable for WebSocket URL
-    ws_url = f"wss://{DOMAIN}/media-stream?agent_id={agent['id']}"
+    ws_url = f"wss://{DOMAIN}/media-stream"
     print(f"WebSocket URL: {ws_url}")
     print(f"DOMAIN env var: {DOMAIN}")
+    print(f"Agent ID: {agent['id']}")
     
     vr = VoiceResponse()
     connect = Connect()
-    connect.stream(url=ws_url)
+    stream = connect.stream(url=ws_url)
+    # Pass agent_id as a custom parameter (accessible in customParameters)
+    stream.parameter(name="agent_id", value=str(agent['id']))
     vr.append(connect)
     
     twiml_response = str(vr)
@@ -179,53 +182,11 @@ async def handle_media_stream(websocket: WebSocket):
         logger.error(f"❌ WebSocket accept failed: {e}")
         raise
 
-    agent_id = websocket.query_params.get("agent_id")
-    logger.info(f"Query params dict: {dict(websocket.query_params)}")
-    logger.info(f"Query params items: {list(websocket.query_params.items())}")
-    logger.info(f"Agent ID from query: {agent_id}")
-    
-    # Try alternative ways to get agent_id
-    if not agent_id:
-        # Try accessing directly
-        try:
-            agent_id = websocket.scope.get("query_string", b"").decode()
-            logger.info(f"Raw query string: {agent_id}")
-            if "agent_id=" in agent_id:
-                agent_id = agent_id.split("agent_id=")[1].split("&")[0]
-                logger.info(f"Extracted agent_id: {agent_id}")
-        except Exception as e:
-            logger.error(f"Error extracting agent_id: {e}")
-
+    # Twilio doesn't pass URL query params to WebSocket
+    # We'll get agent_id from the 'start' event's customParameters instead
+    agent_id = None
     agent = None
-    if agent_id:
-        try:
-            agent = get_agent_by_id(int(agent_id))
-        except Exception as e:
-            print("ERROR loading agent:", e)
-            agent = None 
-
-    print("WS agent_id:", agent_id)
-    print("WS agent found:", bool(agent))
-    if agent:
-        logger.info("WS agent found - loading config")
-        logger.info(f"WS first_message: {agent.get('first_message')}")
-
-    instructions = (
-        agent["system_prompt"]
-        if agent and agent.get("system_prompt")
-        else SYSTEM_MESSAGE
-    )
-
-    voice = agent.get("voice") if agent else None
-    tools = json.loads(agent["tools_json"]) if agent and agent.get("tools_json") else None
-    provider = agent.get("provider") if agent else None
-    first_message = agent.get("first_message") if agent else None
-    # settings_json removed - column doesn't exist yet
-    db_prompt = get_agent_prompt(agent_id) if agent_id else None
-
-    logger.info(f"🎤 first_message value: '{first_message}'")
-    logger.info(f"🎤 first_message is truthy: {bool(first_message)}")
-    logger.info("✅ Twilio WS connected")
+    first_message = None
 
     # OpenAI Realtime websocket
     realtime_url = (
@@ -302,7 +263,7 @@ async def handle_media_stream(websocket: WebSocket):
             response_start_timestamp_twilio = None
 
         async def receive_from_twilio():
-            nonlocal stream_sid, latest_media_timestamp, response_start_timestamp_twilio, last_assistant_item, first_message_sent
+            nonlocal stream_sid, latest_media_timestamp, response_start_timestamp_twilio, last_assistant_item, first_message_sent, agent_id, agent, first_message
 
             try:
                 async for message in websocket.iter_text():
@@ -313,8 +274,23 @@ async def handle_media_stream(websocket: WebSocket):
                     if evt == "start":
                         stream_sid = data["start"]["streamSid"]
                         custom = data["start"].get("customParameters") or {}
-                        tenant_phone = custom.get("tenant_phone")
-                        print(f"▶️ start streamSid={stream_sid} tenant_phone={tenant_phone}")
+                        agent_id = custom.get("agent_id")
+                        
+                        logger.info(f"▶️ start streamSid={stream_sid}")
+                        logger.info(f"📦 customParameters: {custom}")
+                        logger.info(f"🆔 agent_id from customParameters: {agent_id}")
+                        
+                        # Load agent configuration
+                        if agent_id:
+                            try:
+                                agent = get_agent_by_id(int(agent_id))
+                                logger.info(f"✅ Agent loaded: {agent.get('name') if agent else None}")
+                                
+                                if agent:
+                                    first_message = agent.get("first_message")
+                                    logger.info(f"🎤 first_message loaded: '{first_message}'")
+                            except Exception as e:
+                                logger.error(f"❌ Error loading agent: {e}")
 
                         # Reset per-call state
                         response_start_timestamp_twilio = None
