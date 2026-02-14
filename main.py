@@ -62,10 +62,10 @@ async def incoming_call(request: Request):
     called_number = form_data.get("To")
     from_number = form_data.get("From")
 
-    logger.info("=" * 50)
-    logger.info("INCOMING CALL")
-    logger.info(f"TWILIO To (raw): {called_number}")
-    logger.info(f"TWILIO From: {from_number}")
+    print("=" * 50)
+    print("INCOMING CALL")
+    print("TWILIO To (raw):", called_number)
+    print("TWILIO From:", from_number)
 
     # Try multiple phone number formats to match database
     agent = None
@@ -86,10 +86,10 @@ async def incoming_call(request: Request):
             agent = get_agent_by_phone(with_plus)
             print(f"Lookup with '{with_plus}':", bool(agent))
     
-    logger.info(f"Agent found: {bool(agent}"))
+    print("Agent found:", bool(agent))
     if agent:
-        logger.info(f"Agent ID: {agent.get('id'}"))
-    logger.info("=" * 50)
+        print("Agent ID:", agent.get('id'))
+    print("=" * 50)
     
     if not agent:
         vr = VoiceResponse()
@@ -114,9 +114,9 @@ async def incoming_call(request: Request):
 @app.on_event("startup")
 async def startup_event():
     init_db()
-    logger.info("=" * 60)
-    logger.info("🚀 APP STARTUP - VERSION: FIRST_MESSAGE_FIX_v2")
-    logger.info("=" * 60)
+    print("=" * 60)
+    print("🚀 APP STARTUP - VERSION: FIRST_MESSAGE_FIX_v2")
+    print("=" * 60)
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -132,7 +132,7 @@ app.include_router(prompt_router)
 app.include_router(auth_router)
 app.include_router(portal_router)
 
-logger.info("📋 Registered routes:")
+print("📋 Registered routes:")
 for route in app.routes:
     print(f"  - {route.path} ({route.methods if hasattr(route, 'methods') else 'WebSocket'})")
 
@@ -169,10 +169,8 @@ async def handle_media_stream(websocket: WebSocket):
     """
     Twilio <-> OpenAI Realtime bridge.
     """
-    logger.info("🚨🚨🚨 WEBSOCKET HANDLER STARTED 🚨🚨🚨")
     logger.info("=" * 50)
     logger.info("🔌 WebSocket connection attempt")
-    logger.info(f"Query params: {dict(websocket.query_params)}")
     
     try:
         await websocket.accept()
@@ -182,23 +180,21 @@ async def handle_media_stream(websocket: WebSocket):
         raise
 
     agent_id = websocket.query_params.get("agent_id")
+    logger.info(f"Agent ID from query: {agent_id}")
 
     agent = None
     if agent_id:
         try:
             agent = get_agent_by_id(int(agent_id))
         except Exception as e:
-            logger.info(f"ERROR loading agent: {e}")
+            print("ERROR loading agent:", e)
             agent = None 
 
-    logger.info(f"WS agent_id: {agent_id}")
-    logger.info(f"WS agent found: {bool(agent}"))
+    print("WS agent_id:", agent_id)
+    print("WS agent found:", bool(agent))
     if agent:
-        logger.info(f"WS system_prompt len: {len(agent.get("system_prompt"}") or ""))
-        logger.info(f"WS first_message: {agent.get("first_message"}"))
-        logger.info(f"WS voice: {agent.get("voice"}"))
-        logger.info(f"WS provider: {agent.get("provider"}"))
-        logger.info(f"WS tools_json present: {bool(agent.get("tools_json"}")))
+        logger.info("WS agent found - loading config")
+        logger.info(f"WS first_message: {agent.get('first_message')}")
 
     instructions = (
         agent["system_prompt"]
@@ -213,9 +209,8 @@ async def handle_media_stream(websocket: WebSocket):
     # settings_json removed - column doesn't exist yet
     db_prompt = get_agent_prompt(agent_id) if agent_id else None
 
-    logger.info(f"Using DB prompt: {bool(db_prompt}"))
-    print(f"🎤 first_message value: '{first_message}'")
-    print(f"🎤 first_message is truthy: {bool(first_message)}")
+    logger.info(f"🎤 first_message value: '{first_message}'")
+    logger.info(f"🎤 first_message is truthy: {bool(first_message)}")
     logger.info("✅ Twilio WS connected")
 
     # OpenAI Realtime websocket
@@ -314,8 +309,7 @@ async def handle_media_stream(websocket: WebSocket):
                         
                         # Send first message if configured
                         if first_message and not first_message_sent:
-                            print(f"📢 Sending first message: {first_message}")
-                            print(f"📢 first_message_sent flag before: {first_message_sent}")
+                            logger.info(f"📢 Sending first message: {first_message}")
                             await openai_ws.send(json.dumps({
                                 "type": "conversation.item.create",
                                 "item": {
@@ -330,7 +324,7 @@ async def handle_media_stream(websocket: WebSocket):
                                 "type": "response.create"
                             }))
                             first_message_sent = True
-                            print(f"📢 first_message_sent flag after: {first_message_sent}")
+                            logger.info("📢 First message sent successfully")
 
                     elif evt == "media":
                         # Track timestamp so truncation math works
@@ -354,11 +348,11 @@ async def handle_media_stream(websocket: WebSocket):
                             mark_queue.pop(0)
 
                     elif evt == "stop":
-                        logger.info("⏹️ stop received")
+                        print("⏹️ stop received")
                         break
 
             except WebSocketDisconnect:
-                logger.info("❌ Twilio WS disconnected")
+                print("❌ Twilio WS disconnected")
                 try:
                     await openai_ws.close()
                 except Exception:
@@ -373,7 +367,7 @@ async def handle_media_stream(websocket: WebSocket):
                     rtype = resp.get("type")
 
                     if rtype in LOG_EVENT_TYPES:
-                        logger.info(f"OpenAI event: {rtype}")
+                        print("OpenAI event:", rtype)
 
                     # 1) Stream audio back to Twilio
                     if rtype in ("response.output_audio.delta", "response.audio.delta"):
@@ -400,12 +394,12 @@ async def handle_media_stream(websocket: WebSocket):
 
                     # 2) If caller starts speaking, interrupt assistant
                     if rtype == "input_audio_buffer.speech_started":
-                        logger.info("🗣️ speech_started → interrupt")
+                        print("🗣️ speech_started → interrupt")
                         await handle_speech_started_event()
 
                     # ✅ When caller stops speaking wait one second, ask the model to respond
                     if rtype == "input_audio_buffer.speech_stopped":
-                        logger.info("🛑 speech_stopped → commit + response.create")
+                        print("🛑 speech_stopped → commit + response.create")
                         await openai_ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
                         await openai_ws.send(json.dumps({"type": "response.create"}))
 
