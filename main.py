@@ -180,7 +180,21 @@ async def handle_media_stream(websocket: WebSocket):
         raise
 
     agent_id = websocket.query_params.get("agent_id")
+    logger.info(f"Query params dict: {dict(websocket.query_params)}")
+    logger.info(f"Query params items: {list(websocket.query_params.items())}")
     logger.info(f"Agent ID from query: {agent_id}")
+    
+    # Try alternative ways to get agent_id
+    if not agent_id:
+        # Try accessing directly
+        try:
+            agent_id = websocket.scope.get("query_string", b"").decode()
+            logger.info(f"Raw query string: {agent_id}")
+            if "agent_id=" in agent_id:
+                agent_id = agent_id.split("agent_id=")[1].split("&")[0]
+                logger.info(f"Extracted agent_id: {agent_id}")
+        except Exception as e:
+            logger.error(f"Error extracting agent_id: {e}")
 
     agent = None
     if agent_id:
