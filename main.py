@@ -187,6 +187,11 @@ async def handle_media_stream(websocket: WebSocket):
     agent_id = None
     agent = None
     first_message = None
+    
+    # Default values (will be updated when we receive the start event)
+    instructions = SYSTEM_MESSAGE
+    voice = VOICE
+    tools = None
 
     # OpenAI Realtime websocket
     realtime_url = (
@@ -289,6 +294,20 @@ async def handle_media_stream(websocket: WebSocket):
                                 if agent:
                                     first_message = agent.get("first_message")
                                     logger.info(f"🎤 first_message loaded: '{first_message}'")
+                                    
+                                    # Update session with agent's configuration
+                                    agent_instructions = agent.get("system_prompt") or SYSTEM_MESSAGE
+                                    agent_voice = agent.get("voice") or VOICE
+                                    agent_tools = json.loads(agent.get("tools_json") or "null")
+                                    
+                                    # Send session.update to apply agent config
+                                    await initialize_session(
+                                        openai_ws,
+                                        instructions=agent_instructions,
+                                        voice=agent_voice,
+                                        tools=agent_tools
+                                    )
+                                    logger.info("🔄 OpenAI session updated with agent config")
                             except Exception as e:
                                 logger.error(f"❌ Error loading agent: {e}")
 
