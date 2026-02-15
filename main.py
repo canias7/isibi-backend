@@ -372,6 +372,12 @@ async def handle_media_stream(websocket: WebSocket):
 
                     if rtype in LOG_EVENT_TYPES:
                         print("OpenAI event:", rtype)
+                    
+                    # Log errors with full details
+                    if rtype == "error":
+                        error_details = resp.get("error", {})
+                        logger.error(f"❌ OpenAI Error: {error_details}")
+                        logger.error(f"Full error response: {resp}")
 
                     # 1) Stream audio back to Twilio
                     if rtype in ("response.output_audio.delta", "response.audio.delta"):
