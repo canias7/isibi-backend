@@ -300,8 +300,15 @@ async def handle_media_stream(websocket: WebSocket):
                                     agent_voice = agent.get("voice") or VOICE
                                     agent_tools = json.loads(agent.get("tools_json") or "null")
                                     
+                                    # Validate voice - if it's "string" or invalid, use default
+                                    valid_voices = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar']
+                                    if agent_voice not in valid_voices:
+                                        logger.warning(f"⚠️ Invalid voice '{agent_voice}', using default 'alloy'")
+                                        agent_voice = 'alloy'
+                                    
                                     logger.info(f"📝 System prompt loaded (length: {len(agent_instructions)} chars)")
                                     logger.info(f"📝 System prompt preview: {agent_instructions[:200]}...")
+                                    logger.info(f"🎙️ Using voice: {agent_voice}")
                                     
                                     # Send session.update to apply agent config
                                     await initialize_session(
