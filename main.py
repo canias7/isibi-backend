@@ -298,7 +298,20 @@ async def handle_media_stream(websocket: WebSocket):
                                     # Update session with agent's configuration
                                     agent_instructions = agent.get("system_prompt") or SYSTEM_MESSAGE
                                     agent_voice = agent.get("voice") or VOICE
-                                    agent_tools = json.loads(agent.get("tools_json") or "null")
+                                    
+                                    # Parse tools - must be array for OpenAI, not object
+                                    tools_raw = agent.get("tools_json") or "null"
+                                    try:
+                                        parsed_tools = json.loads(tools_raw)
+                                        # If tools is a dict/object, convert to None (OpenAI expects array or null)
+                                        if isinstance(parsed_tools, dict):
+                                            agent_tools = None
+                                        elif isinstance(parsed_tools, list):
+                                            agent_tools = parsed_tools
+                                        else:
+                                            agent_tools = None
+                                    except:
+                                        agent_tools = None
                                     
                                     # Validate voice - if it's "string" or invalid, use default
                                     valid_voices = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar']
