@@ -300,6 +300,9 @@ async def handle_media_stream(websocket: WebSocket):
                                     agent_voice = agent.get("voice") or VOICE
                                     agent_tools = json.loads(agent.get("tools_json") or "null")
                                     
+                                    logger.info(f"📝 System prompt loaded (length: {len(agent_instructions)} chars)")
+                                    logger.info(f"📝 System prompt preview: {agent_instructions[:200]}...")
+                                    
                                     # Send session.update to apply agent config
                                     await initialize_session(
                                         openai_ws,
