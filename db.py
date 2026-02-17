@@ -344,6 +344,21 @@ def update_agent(owner_user_id: int, agent_id: int, **fields):
     conn.close()
     return changed
 
+def delete_agent(owner_user_id: int, agent_id: int):
+    """Delete an agent. Only the owner can delete their own agents."""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    
+    cur.execute(
+        "DELETE FROM agents WHERE id = ? AND owner_user_id = ?",
+        (agent_id, owner_user_id)
+    )
+    
+    conn.commit()
+    deleted = cur.rowcount > 0
+    conn.close()
+    return deleted
+
 def get_agent_by_id(agent_id: int):
     conn = get_conn()
     cur = conn.cursor()

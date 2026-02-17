@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from auth_routes import verify_token  # your JWT verify function
-from db import create_agent, list_agents, get_agent, update_agent  # the functions you added in db.py
+from db import create_agent, list_agents, get_agent, update_agent, delete_agent  # the functions you added in db.py
 
 router = APIRouter(prefix="/api", tags=["portal"])
 
@@ -141,3 +141,15 @@ def api_update_agent(agent_id: int, payload: UpdateAgentRequest, user=Depends(ve
         return {"ok": True, "updated": False}
 
     return {"ok": True, "updated": True}
+
+
+@router.delete("/agents/{agent_id}")
+def api_delete_agent(agent_id: int, user=Depends(verify_token)):
+    owner_user_id = user["id"]
+    
+    deleted = delete_agent(owner_user_id, agent_id)
+    
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Agent not found or you don't have permission to delete it")
+    
+    return {"ok": True, "deleted": True}
