@@ -5,7 +5,6 @@ import websockets
 import logging
 import httpx
 import base64
-import audioop
 from db import get_agent_prompt, init_db, get_agent_by_id
 from prompt_api import router as prompt_router
 from fastapi import FastAPI, WebSocket, Request
