@@ -3,6 +3,9 @@ import json
 import asyncio
 import websockets
 import logging
+import httpx
+import base64
+import audioop
 from db import get_agent_prompt, init_db, get_agent_by_id
 from prompt_api import router as prompt_router
 from fastapi import FastAPI, WebSocket, Request
@@ -26,9 +29,10 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 PORT = int(os.getenv("PORT", 5050))
 TEMPERATURE = float(os.getenv("TEMPERATURE", 0.8))
-DOMAIN = os.getenv("DOMAIN", "isibi-backend.onrender.com")  # Your public domain or ngrok URL
+DOMAIN = os.getenv("DOMAIN", "isibi-backend.onrender.com")
 
 SYSTEM_MESSAGE = (
     "You are a helpful and bubbly AI assistant who loves to chat about "
@@ -187,6 +191,7 @@ async def handle_media_stream(websocket: WebSocket):
     agent_id = None
     agent = None
     first_message = None
+    elevenlabs_voice_id = None  # NEW
     
     # Default values (will be updated when we receive the start event)
     instructions = SYSTEM_MESSAGE
@@ -268,7 +273,7 @@ async def handle_media_stream(websocket: WebSocket):
             response_start_timestamp_twilio = None
 
         async def receive_from_twilio():
-            nonlocal stream_sid, latest_media_timestamp, response_start_timestamp_twilio, last_assistant_item, first_message_sent, agent_id, agent, first_message
+            nonlocal stream_sid, latest_media_timestamp, response_start_timestamp_twilio, last_assistant_item, first_message_sent, agent_id, agent, first_message, elevenlabs_voice_id
 
             try:
                 async for message in websocket.iter_text():
@@ -298,12 +303,12 @@ async def handle_media_stream(websocket: WebSocket):
                                     # Update session with agent's configuration
                                     agent_instructions = agent.get("system_prompt") or SYSTEM_MESSAGE
                                     agent_voice = agent.get("voice") or VOICE
+                                    elevenlabs_voice_id = agent.get("elevenlabs_voice_id")
                                     
                                     # Parse tools - must be array for OpenAI, not object
                                     tools_raw = agent.get("tools_json") or "null"
                                     try:
                                         parsed_tools = json.loads(tools_raw)
-                                        # If tools is a dict/object, convert to None (OpenAI expects array or null)
                                         if isinstance(parsed_tools, dict):
                                             agent_tools = None
                                         elif isinstance(parsed_tools, list):
@@ -319,16 +324,21 @@ async def handle_media_stream(websocket: WebSocket):
                                         logger.warning(f"⚠️ Invalid voice '{agent_voice}', using default 'alloy'")
                                         agent_voice = 'alloy'
                                     
+                                    # Determine if using ElevenLabs
+                                    use_elevenlabs = bool(elevenlabs_voice_id and ELEVENLABS_API_KEY)
+                                    
                                     logger.info(f"📝 System prompt loaded (length: {len(agent_instructions)} chars)")
                                     logger.info(f"📝 System prompt preview: {agent_instructions[:200]}...")
                                     logger.info(f"🎙️ Using voice: {agent_voice}")
+                                    logger.info(f"🎙️ ElevenLabs voice ID: {elevenlabs_voice_id or 'None (using OpenAI voice)'}")
                                     
                                     # Send session.update to apply agent config
                                     await initialize_session(
                                         openai_ws,
                                         instructions=agent_instructions,
                                         voice=agent_voice,
-                                        tools=agent_tools
+                                        tools=agent_tools,
+                                        use_elevenlabs=use_elevenlabs
                                     )
                                     logger.info("🔄 OpenAI session updated with agent config")
                             except Exception as e:
@@ -342,16 +352,31 @@ async def handle_media_stream(websocket: WebSocket):
                         # Send first message if configured
                         if first_message and not first_message_sent:
                             logger.info(f"📢 Sending first message: {first_message}")
-                            # Use response.create with input directly to force exact message
-                            await openai_ws.send(json.dumps({
-                                "type": "response.create",
-                                "response": {
-                                    "modalities": ["audio", "text"],
-                                    "instructions": f"Say exactly this and nothing else: '{first_message}'"
-                                }
-                            }))
+                            use_elevenlabs = bool(elevenlabs_voice_id and ELEVENLABS_API_KEY)
+                            
+                            if use_elevenlabs:
+                                # Use ElevenLabs for first message audio
+                                audio_bytes = await elevenlabs_tts(first_message, elevenlabs_voice_id)
+                                if audio_bytes and stream_sid:
+                                    audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+                                    await websocket.send_text(json.dumps({
+                                        "event": "media",
+                                        "streamSid": stream_sid,
+                                        "media": {"payload": audio_b64}
+                                    }))
+                                    logger.info("📢 First message sent via ElevenLabs")
+                            else:
+                                # Use OpenAI for first message
+                                await openai_ws.send(json.dumps({
+                                    "type": "response.create",
+                                    "response": {
+                                        "modalities": ["audio", "text"],
+                                        "instructions": f"Say exactly this and nothing else: '{first_message}'"
+                                    }
+                                }))
+                                logger.info("📢 First message sent via OpenAI")
+                            
                             first_message_sent = True
-                            logger.info("📢 First message sent successfully")
 
                     elif evt == "media":
                         # Track timestamp so truncation math works
@@ -402,35 +427,60 @@ async def handle_media_stream(websocket: WebSocket):
                         logger.error(f"❌ OpenAI Error: {error_details}")
                         logger.error(f"Full error response: {resp}")
 
-                    # 1) Stream audio back to Twilio
-                    if rtype in ("response.output_audio.delta", "response.audio.delta"):
-                        audio_b64 = resp.get("delta")
-                        if not audio_b64 or not stream_sid:
-                            continue
+                    use_elevenlabs = bool(elevenlabs_voice_id and ELEVENLABS_API_KEY)
 
-                        # Detect new assistant item to start truncation timer
-                        item_id = resp.get("item_id")
-                        if item_id and item_id != last_assistant_item:
-                            response_start_timestamp_twilio = latest_media_timestamp
-                            last_assistant_item = item_id
+                    # --- ELEVENLABS MODE: intercept completed text response ---
+                    if use_elevenlabs and rtype == "response.done":
+                        try:
+                            output = resp.get("response", {}).get("output", [])
+                            for item in output:
+                                if item.get("type") == "message":
+                                    for content in item.get("content", []):
+                                        if content.get("type") == "text":
+                                            text = content.get("text", "").strip()
+                                            if text and stream_sid:
+                                                logger.info(f"🎙️ ElevenLabs converting: {text[:80]}...")
+                                                audio_bytes = await elevenlabs_tts(text, elevenlabs_voice_id)
+                                                if audio_bytes:
+                                                    audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+                                                    await websocket.send_text(json.dumps({
+                                                        "event": "media",
+                                                        "streamSid": stream_sid,
+                                                        "media": {"payload": audio_b64}
+                                                    }))
+                                                    await send_mark()
+                                                    logger.info("✅ ElevenLabs audio sent to Twilio")
+                        except Exception as e:
+                            logger.error(f"❌ ElevenLabs processing error: {e}")
+                        continue
 
-                        await websocket.send_text(
-                            json.dumps(
-                                {
+                    # --- OPENAI MODE: stream audio directly ---
+                    if not use_elevenlabs:
+                        if rtype in ("response.output_audio.delta", "response.audio.delta"):
+                            audio_b64 = resp.get("delta")
+                            if not audio_b64 or not stream_sid:
+                                continue
+
+                            item_id = resp.get("item_id")
+                            if item_id and item_id != last_assistant_item:
+                                response_start_timestamp_twilio = latest_media_timestamp
+                                last_assistant_item = item_id
+
+                            await websocket.send_text(
+                                json.dumps({
                                     "event": "media",
                                     "streamSid": stream_sid,
                                     "media": {"payload": audio_b64},
-                                }
+                                })
                             )
-                        )
-                        await send_mark()
+                            await send_mark()
 
                     # 2) If caller starts speaking, interrupt assistant
                     if rtype == "input_audio_buffer.speech_started":
                         print("🗣️ speech_started → interrupt")
                         await handle_speech_started_event()
 
-                    # ✅ When caller stops speaking wait one second, ask the model to respond
+                    # When caller stops speaking commit audio and request response
                     if rtype == "input_audio_buffer.speech_stopped":
                         print("🛑 speech_stopped → commit + response.create")
                         await openai_ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
@@ -442,26 +492,91 @@ async def handle_media_stream(websocket: WebSocket):
         await asyncio.gather(receive_from_twilio(), send_to_twilio())
 
 
-async def initialize_session(openai_ws, instructions: str, voice: str | None = None, tools: dict | None = None, first_message: str | None = None):
+async def elevenlabs_tts(text: str, voice_id: str) -> bytes | None:
+    """
+    Convert text to speech using ElevenLabs API.
+    Returns raw PCM audio bytes (mulaw 8khz for Twilio) or None on failure.
+    """
+    if not ELEVENLABS_API_KEY:
+        logger.error("❌ ELEVENLABS_API_KEY not set")
+        return None
+
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
+    
+    headers = {
+        "xi-api-key": ELEVENLABS_API_KEY,
+        "Content-Type": "application/json",
+        "Accept": "audio/mpeg",
+    }
+    
+    payload = {
+        "text": text,
+        "model_id": "eleven_turbo_v2",  # Fastest model for low latency
+        "voice_settings": {
+            "stability": 0.5,
+            "similarity_boost": 0.8,
+            "speed": 1.0
+        },
+        "output_format": "ulaw_8000",  # Direct mulaw 8khz - perfect for Twilio
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(url, headers=headers, json=payload)
+            
+            if response.status_code != 200:
+                logger.error(f"❌ ElevenLabs error: {response.status_code} - {response.text}")
+                return None
+            
+            audio_bytes = response.content
+            logger.info(f"✅ ElevenLabs TTS generated: {len(audio_bytes)} bytes")
+            return audio_bytes
+            
+    except Exception as e:
+        logger.error(f"❌ ElevenLabs TTS exception: {e}")
+        return None
+
+
+async def initialize_session(openai_ws, instructions: str, voice: str | None = None, tools: dict | None = None, first_message: str | None = None, use_elevenlabs: bool = False):
     """
     Configure OpenAI Realtime session for Twilio Media Streams (G.711 u-law).
+    If use_elevenlabs=True, set OpenAI to text-only mode (ElevenLabs handles audio output).
     """
-    session_update = {
-        "type": "session.update",
-        "session": {
-            "modalities": ["audio", "text"],
-            "input_audio_format": "g711_ulaw",
-            "output_audio_format": "g711_ulaw",
-            "voice": voice or VOICE,
-            "instructions": instructions,
-            "turn_detection": {
-                "type": "server_vad",
-                "threshold": 0.5,  # Sensitivity: 0.0-1.0 (higher = less sensitive)
-                "prefix_padding_ms": 300,  # Audio to include before speech starts
-                "silence_duration_ms": 1000  # Wait 1 second of silence before responding (default is 500ms)
+    if use_elevenlabs:
+        # Text-only mode: OpenAI listens to audio input but outputs TEXT only
+        # ElevenLabs will convert text to speech
+        session_update = {
+            "type": "session.update",
+            "session": {
+                "modalities": ["text"],  # TEXT ONLY - ElevenLabs handles audio
+                "input_audio_format": "g711_ulaw",
+                "instructions": instructions,
+                "turn_detection": {
+                    "type": "server_vad",
+                    "threshold": 0.5,
+                    "prefix_padding_ms": 300,
+                    "silence_duration_ms": 1000
+                },
             },
-        },
-    }
+        }
+    else:
+        # Normal mode: OpenAI handles both input and output audio
+        session_update = {
+            "type": "session.update",
+            "session": {
+                "modalities": ["audio", "text"],
+                "input_audio_format": "g711_ulaw",
+                "output_audio_format": "g711_ulaw",
+                "voice": voice or VOICE,
+                "instructions": instructions,
+                "turn_detection": {
+                    "type": "server_vad",
+                    "threshold": 0.5,
+                    "prefix_padding_ms": 300,
+                    "silence_duration_ms": 1000
+                },
+            },
+        }
 
     if tools:
         session_update["session"]["tools"] = tools
