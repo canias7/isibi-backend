@@ -51,7 +51,6 @@ def init_db():
         assistant_name TEXT,
         first_message TEXT,
         tools_json TEXT,
-        elevenlabs_voice_id TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(owner_user_id) REFERENCES users(id)
@@ -66,9 +65,8 @@ def init_db():
     add_column_if_missing(conn, "agents", "assistant_name", "TEXT")
     add_column_if_missing(conn, "agents", "system_prompt", "TEXT")
     add_column_if_missing(conn, "agents", "voice", "TEXT")
-    add_column_if_missing(conn, "agents", "tools_json", "TEXT")
-    add_column_if_missing(conn, "agents", "settings_json", "TEXT")
-    add_column_if_missing(conn, "agents", "elevenlabs_voice_id", "TEXT")  # NEW
+    add_column_if_missing(conn, "agents", "tools_json", "TEXT")  # store JSON as TEXT
+    add_column_if_missing(conn, "agents", "settings_json", "TEXT")  # for future use
     
     conn.commit()
     conn.close()
@@ -76,10 +74,12 @@ def init_db():
 def get_tenant_by_number(phone):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
+
     cur.execute(
         "SELECT id, phone_number FROM tenants WHERE phone_number = ?",
         (phone,)
     )
+
     row = cur.fetchone()
     conn.close()
     return row
@@ -88,10 +88,12 @@ def get_tenant_by_number(phone):
 def get_agent_prompt(tenant_id):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
+
     cur.execute(
         "SELECT agent_prompt FROM tenants WHERE id = ?",
         (tenant_id,)
     )
+
     row = cur.fetchone()
     conn.close()
     return row[0] if row else None
@@ -100,10 +102,12 @@ def get_agent_prompt(tenant_id):
 def set_agent_prompt(tenant_id, prompt):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
+
     cur.execute(
         "UPDATE tenants SET agent_prompt = ? WHERE id = ?",
         (prompt, tenant_id)
     )
+
     conn.commit()
     conn.close()
 
@@ -111,10 +115,12 @@ def set_agent_prompt(tenant_id, prompt):
 def create_tenant_if_missing(phone_number: str):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
+
     cur.execute(
         "INSERT OR IGNORE INTO tenants (phone_number, agent_prompt) VALUES (?, ?)",
         (phone_number, "")
     )
+
     conn.commit()
     conn.close()
 
@@ -124,6 +130,7 @@ import bcrypt
 
 def create_user(email: str, password: str, tenant_phone: str | None = None):
     password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute(
@@ -142,7 +149,7 @@ def get_user_by_email(email: str):
     )
     row = cur.fetchone()
     conn.close()
-    return row
+    return row  # (id, email, password_hash, tenant_phone) or None
 
 def verify_user(email: str, password: str):
     row = get_user_by_email(email)
@@ -167,8 +174,7 @@ def create_agent(
     voice: str = None,
     provider: str = None,
     first_message: str = None,
-    tools: dict = None,
-    elevenlabs_voice_id: str = None,
+    tools: dict = None,   # example: {"google_calendar": True, "slack": False}
 ):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -186,10 +192,9 @@ def create_agent(
             voice,
             provider,
             first_message,
-            tools_json,
-            elevenlabs_voice_id
+            tools_json
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             owner_user_id,
@@ -201,7 +206,6 @@ def create_agent(
             provider,
             first_message,
             tools_json,
-            elevenlabs_voice_id,
         )
     )
 
@@ -217,9 +221,17 @@ def list_agents(owner_user_id: int):
     cur.execute(
         """
         SELECT
-            id, name, business_name, phone_number, system_prompt,
-            voice, provider, first_message, tools_json, elevenlabs_voice_id,
-            created_at, updated_at
+            id,
+            name,
+            business_name,
+            phone_number,
+            system_prompt,
+            voice,
+            provider,
+            first_message,
+            tools_json,
+            created_at,
+            updated_at
         FROM agents
         WHERE owner_user_id = ?
         ORDER BY id DESC
@@ -247,16 +259,15 @@ def list_agents(owner_user_id: int):
             "voice": r[5],
             "provider": r[6],
             "first_message": r[7],
-            "tools": tools,
-            "elevenlabs_voice_id": r[9],
-            "created_at": r[10],
-            "updated_at": r[11],
+            "tools": tools,          # returned as dict
+            "created_at": r[9],
+            "updated_at": r[10],
         })
 
     return agents
 
 def get_agent(owner_user_id: int, agent_id: int):
-    conn = get_conn()
+    conn = get_conn()  # Uses row_factory = sqlite3.Row
     cur = conn.cursor()
 
     cur.execute(
@@ -264,7 +275,7 @@ def get_agent(owner_user_id: int, agent_id: int):
         SELECT
             id, owner_user_id, name, business_name, phone_number,
             system_prompt, voice, provider, first_message, tools_json,
-            elevenlabs_voice_id, created_at, updated_at
+            created_at, updated_at
         FROM agents
         WHERE id = ? AND owner_user_id = ?
         """,
@@ -277,8 +288,10 @@ def get_agent(owner_user_id: int, agent_id: int):
     if not row:
         return None
 
+    # Convert Row to dict
     agent_dict = dict(row)
     
+    # Parse tools_json if present
     tools_raw = agent_dict.get("tools_json") or "{}"
     try:
         agent_dict["tools"] = json.loads(tools_raw)
@@ -288,6 +301,7 @@ def get_agent(owner_user_id: int, agent_id: int):
     return agent_dict
 
 def update_agent(owner_user_id: int, agent_id: int, **fields):
+    # Allowed fields that can be updated from the UI
     allowed = {
         "name",
         "business_name",
@@ -296,17 +310,17 @@ def update_agent(owner_user_id: int, agent_id: int, **fields):
         "voice",
         "provider",
         "first_message",
-        "tools_json",
-        "elevenlabs_voice_id",  # NEW
+        "tools_json",   # store JSON string
     }
 
     updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
 
+    # If UI passes tools as dict, convert to tools_json string
     if "tools" in fields and fields["tools"] is not None:
         updates["tools_json"] = json.dumps(fields["tools"])
 
     if not updates:
-        return False
+        return False  # nothing to update
 
     set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
     params = list(updates.values())
