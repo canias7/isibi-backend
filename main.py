@@ -18,6 +18,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from auth import verify_token
 from twilio.twiml.voice_response import VoiceResponse, Connect, Stream
+from google_calendar import check_availability, create_appointment, list_appointments
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -305,12 +306,22 @@ async def handle_media_stream(websocket: WebSocket):
                                         parsed_tools = json.loads(tools_raw)
                                         # If tools is a dict/object, convert to None (OpenAI expects array or null)
                                         if isinstance(parsed_tools, dict):
-                                            agent_tools = None
+                                            agent_tools = []
                                         elif isinstance(parsed_tools, list):
                                             agent_tools = parsed_tools
                                         else:
-                                            agent_tools = None
+                                            agent_tools = []
                                     except:
+                                        agent_tools = []
+                                    
+                                    # Add Google Calendar tools if connected
+                                    calendar_tools = get_calendar_tools(int(agent_id))
+                                    if calendar_tools:
+                                        agent_tools.extend(calendar_tools)
+                                        logger.info(f"📅 Google Calendar tools enabled ({len(calendar_tools)} functions)")
+                                    
+                                    # Convert to None if still empty
+                                    if not agent_tools:
                                         agent_tools = None
                                     
                                     # Validate voice - if it's "string" or invalid, use default
@@ -402,6 +413,61 @@ async def handle_media_stream(websocket: WebSocket):
                         logger.error(f"❌ OpenAI Error: {error_details}")
                         logger.error(f"Full error response: {resp}")
 
+                    # Handle function calls (Google Calendar)
+                    if rtype == "response.function_call_arguments.done":
+                        call_id = resp.get("call_id")
+                        func_name = resp.get("name")
+                        arguments = resp.get("arguments")
+                        
+                        logger.info(f"📞 Function call: {func_name} with args: {arguments}")
+                        
+                        try:
+                            args = json.loads(arguments)
+                            result = None
+                            
+                            # Execute the calendar function
+                            if func_name == "check_availability":
+                                result = check_availability(
+                                    agent_id=int(agent_id),
+                                    date=args.get("date"),
+                                    time=args.get("time"),
+                                    duration_minutes=args.get("duration_minutes", 30)
+                                )
+                            elif func_name == "create_appointment":
+                                result = create_appointment(
+                                    agent_id=int(agent_id),
+                                    date=args.get("date"),
+                                    time=args.get("time"),
+                                    duration_minutes=args.get("duration_minutes"),
+                                    customer_name=args.get("customer_name"),
+                                    customer_phone=args.get("customer_phone"),
+                                    notes=args.get("notes", "")
+                                )
+                            elif func_name == "list_appointments":
+                                result = list_appointments(
+                                    agent_id=int(agent_id),
+                                    date=args.get("date")
+                                )
+                            
+                            if result:
+                                # Send function result back to OpenAI
+                                await openai_ws.send(json.dumps({
+                                    "type": "conversation.item.create",
+                                    "item": {
+                                        "type": "function_call_output",
+                                        "call_id": call_id,
+                                        "output": json.dumps(result)
+                                    }
+                                }))
+                                
+                                # Request AI response with function result
+                                await openai_ws.send(json.dumps({"type": "response.create"}))
+                                
+                                logger.info(f"✅ Function result sent: {result}")
+                                
+                        except Exception as e:
+                            logger.error(f"❌ Function call error: {e}")
+
                     # 1) Stream audio back to Twilio
                     if rtype in ("response.output_audio.delta", "response.audio.delta"):
                         audio_b64 = resp.get("delta")
@@ -440,6 +506,103 @@ async def handle_media_stream(websocket: WebSocket):
                 print(f"Error in send_to_twilio: {e}")
 
         await asyncio.gather(receive_from_twilio(), send_to_twilio())
+
+
+def get_calendar_tools(agent_id: int) -> list:
+    """
+    Return OpenAI function definitions for Google Calendar if connected.
+    Returns empty list if calendar not connected.
+    """
+    # Check if agent has calendar connected
+    from db import get_conn
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT google_calendar_credentials FROM agents WHERE id = ?",
+        (agent_id,)
+    )
+    row = cur.fetchone()
+    conn.close()
+    
+    if not row or not row[0]:
+        return []
+    
+    # Calendar is connected - return tool definitions
+    return [
+        {
+            "type": "function",
+            "name": "check_availability",
+            "description": "Check if a time slot is available in the calendar. Use this before booking appointments.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {
+                        "type": "string",
+                        "description": "Date in YYYY-MM-DD format (e.g., 2024-03-15)"
+                    },
+                    "time": {
+                        "type": "string",
+                        "description": "Time in HH:MM 24-hour format (e.g., 14:30 for 2:30 PM)"
+                    },
+                    "duration_minutes": {
+                        "type": "integer",
+                        "description": "Duration of appointment in minutes (default 30)"
+                    }
+                },
+                "required": ["date", "time"]
+            }
+        },
+        {
+            "type": "function",
+            "name": "create_appointment",
+            "description": "Create a new appointment in the calendar after confirming availability.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {
+                        "type": "string",
+                        "description": "Date in YYYY-MM-DD format"
+                    },
+                    "time": {
+                        "type": "string",
+                        "description": "Time in HH:MM 24-hour format"
+                    },
+                    "duration_minutes": {
+                        "type": "integer",
+                        "description": "Duration in minutes"
+                    },
+                    "customer_name": {
+                        "type": "string",
+                        "description": "Customer's full name"
+                    },
+                    "customer_phone": {
+                        "type": "string",
+                        "description": "Customer's phone number"
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Additional notes or reason for appointment"
+                    }
+                },
+                "required": ["date", "time", "duration_minutes", "customer_name", "customer_phone"]
+            }
+        },
+        {
+            "type": "function",
+            "name": "list_appointments",
+            "description": "List all appointments for a specific date.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {
+                        "type": "string",
+                        "description": "Date in YYYY-MM-DD format"
+                    }
+                },
+                "required": ["date"]
+            }
+        }
+    ]
 
 
 async def initialize_session(openai_ws, instructions: str, voice: str | None = None, tools: dict | None = None, first_message: str | None = None):

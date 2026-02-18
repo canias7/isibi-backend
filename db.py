@@ -51,6 +51,8 @@ def init_db():
         assistant_name TEXT,
         first_message TEXT,
         tools_json TEXT,
+        google_calendar_credentials TEXT,
+        google_calendar_id TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(owner_user_id) REFERENCES users(id)
@@ -67,6 +69,8 @@ def init_db():
     add_column_if_missing(conn, "agents", "voice", "TEXT")
     add_column_if_missing(conn, "agents", "tools_json", "TEXT")  # store JSON as TEXT
     add_column_if_missing(conn, "agents", "settings_json", "TEXT")  # for future use
+    add_column_if_missing(conn, "agents", "google_calendar_credentials", "TEXT")  # Google OAuth tokens
+    add_column_if_missing(conn, "agents", "google_calendar_id", "TEXT")  # Calendar ID (default = 'primary')
     
     conn.commit()
     conn.close()

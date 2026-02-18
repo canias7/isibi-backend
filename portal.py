@@ -3,6 +3,8 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from auth_routes import verify_token  # your JWT verify function
 from db import create_agent, list_agents, get_agent, update_agent, delete_agent  # the functions you added in db.py
+from google_calendar import get_google_oauth_url, handle_google_callback, disconnect_google_calendar
+from fastapi.responses import RedirectResponse
 
 router = APIRouter(prefix="/api", tags=["portal"])
 
@@ -153,3 +155,46 @@ def api_delete_agent(agent_id: int, user=Depends(verify_token)):
         raise HTTPException(status_code=404, detail="Agent not found or you don't have permission to delete it")
     
     return {"ok": True, "deleted": True}
+
+
+# ========== Google Calendar Integration ==========
+
+@router.get("/agents/{agent_id}/google/auth")
+def google_calendar_auth(agent_id: int, user=Depends(verify_token)):
+    """Start Google Calendar OAuth flow"""
+    owner_user_id = user["id"]
+    
+    # Verify user owns this agent
+    agent = get_agent(owner_user_id, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    try:
+        auth_url = get_google_oauth_url(agent_id, owner_user_id)
+        return {"auth_url": auth_url}
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/google/callback")
+def google_calendar_callback(code: str, state: str):
+    """Handle Google OAuth callback"""
+    try:
+        result = handle_google_callback(code, state)
+        # Redirect to success page in frontend
+        return RedirectResponse(url=f"/calendar-connected?agent_id={result['agent_id']}")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"OAuth error: {str(e)}")
+
+
+@router.delete("/agents/{agent_id}/google/disconnect")
+def google_calendar_disconnect(agent_id: int, user=Depends(verify_token)):
+    """Disconnect Google Calendar from agent"""
+    owner_user_id = user["id"]
+    
+    disconnected = disconnect_google_calendar(agent_id, owner_user_id)
+    
+    if not disconnected:
+        raise HTTPException(status_code=404, detail="Agent not found or calendar not connected")
+    
+    return {"ok": True, "disconnected": True}

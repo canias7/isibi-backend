@@ -50,3 +50,7 @@ urllib3==2.5.0
 uvicorn==0.35.0
 websockets==15.0.1
 yarl==1.20.1
+google-auth==2.36.0
+google-auth-oauthlib==1.2.1
+google-auth-httplib2==0.2.0
+google-api-python-client==2.158.0
