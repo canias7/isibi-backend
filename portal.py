@@ -4,7 +4,7 @@ from typing import Optional, List, Dict, Any
 from auth_routes import verify_token  # your JWT verify function
 from db import create_agent, list_agents, get_agent, update_agent, delete_agent  # the functions you added in db.py
 from google_calendar import get_google_oauth_url, handle_google_callback, disconnect_google_calendar
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, HTMLResponse
 
 router = APIRouter(prefix="/api", tags=["portal"])
 
@@ -184,8 +184,58 @@ def google_calendar_callback(code: str, state: str):
     """Handle Google OAuth callback"""
     try:
         result = handle_google_callback(code, state)
-        # Redirect to success page in frontend
-        return RedirectResponse(url=f"/calendar-connected?agent_id={result['agent_id']}")
+        agent_id = result['agent_id']
+        
+        # Return success HTML that closes itself
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Calendar Connected</title>
+            <style>
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    margin: 0;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                }}
+                .container {{
+                    text-align: center;
+                    padding: 40px;
+                    background: rgba(255, 255, 255, 0.1);
+                    border-radius: 20px;
+                    backdrop-filter: blur(10px);
+                }}
+                .success-icon {{
+                    font-size: 64px;
+                    margin-bottom: 20px;
+                }}
+                h1 {{ margin: 0 0 10px 0; }}
+                p {{ opacity: 0.9; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="success-icon">✅</div>
+                <h1>Google Calendar Connected!</h1>
+                <p>Your AI agent can now book appointments automatically.</p>
+                <p><small>You can close this window and return to your dashboard.</small></p>
+            </div>
+            <script>
+                // Auto-close after 3 seconds
+                setTimeout(() => {{
+                    window.close();
+                }}, 3000);
+            </script>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_content)
+        
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"OAuth error: {str(e)}")
 
