@@ -51,6 +51,7 @@ class AgentOut(BaseModel):
     provider: Optional[str] = None
     voice: Optional[str] = None
     tools: Optional[Dict[str, Any]] = None
+    google_calendar_connected: Optional[bool] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -74,6 +75,7 @@ def api_list_agents(user=Depends(verify_token)):
             "provider": a.get("provider"),
             "voice": a.get("voice"),
             "tools": a.get("tools"),
+            "google_calendar_connected": bool(a.get("google_calendar_id")),
             "created_at": a.get("created_at"),
             "updated_at": a.get("updated_at"),
         }
@@ -117,6 +119,7 @@ def api_get_agent(agent_id: int, user=Depends(verify_token)):
         "provider": a.get("provider"),
         "voice": a.get("voice"),
         "tools": a.get("tools"),
+        "google_calendar_connected": bool(a.get("google_calendar_id")),
         "created_at": a.get("created_at"),
         "updated_at": a.get("updated_at"),
     }
