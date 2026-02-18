@@ -28,6 +28,10 @@ def get_google_oauth_url(agent_id: int, user_id: int) -> str:
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
         raise ValueError("Google OAuth credentials not configured")
     
+    print(f"🔑 Generating OAuth URL with:")
+    print(f"   Client ID: {GOOGLE_CLIENT_ID[:20]}...")
+    print(f"   Redirect URI: {REDIRECT_URI}")
+    
     client_config = {
         "web": {
             "client_id": GOOGLE_CLIENT_ID,
@@ -53,6 +57,8 @@ def get_google_oauth_url(agent_id: int, user_id: int) -> str:
         state=state,
         prompt='consent'  # Force consent to get refresh token
     )
+    
+    print(f"📍 Generated OAuth URL: {authorization_url}")
     
     return authorization_url
 
