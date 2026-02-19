@@ -3,7 +3,7 @@ import json
 import asyncio
 import websockets
 import logging
-from db import get_agent_prompt, init_db, get_agent_by_id, start_call_tracking, end_call_tracking, calculate_call_cost
+from db import get_agent_prompt, init_db, get_agent_by_id, start_call_tracking, end_call_tracking, calculate_call_cost, calculate_call_revenue
 from prompt_api import router as prompt_router
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -417,12 +417,19 @@ async def handle_media_stream(websocket: WebSocket):
                                 call_end_time = datetime.now()
                                 duration_seconds = int((call_end_time - call_start_time).total_seconds())
                                 
-                                # Calculate cost ($0.05 per minute default)
-                                cost = calculate_call_cost(duration_seconds, price_per_minute=0.05)
+                                # YOUR COST: What you pay (e.g., $0.05/min)
+                                cost = calculate_call_cost(duration_seconds, cost_per_minute=0.05)
                                 
-                                end_call_tracking(stream_sid, duration_seconds, cost)
+                                # CUSTOMER REVENUE: What you charge (5x your cost = $0.25/min)
+                                revenue = calculate_call_revenue(duration_seconds, revenue_per_minute=0.25)
                                 
-                                logger.info(f"📊 Call ended: {duration_seconds}s, Cost: ${cost:.4f}")
+                                # PROFIT: What you make
+                                profit = revenue - cost
+                                
+                                end_call_tracking(stream_sid, duration_seconds, cost, revenue)
+                                
+                                logger.info(f"📊 Call ended: {duration_seconds}s")
+                                logger.info(f"💰 Cost: ${cost:.4f} | Revenue: ${revenue:.4f} | Profit: ${profit:.4f}")
                             except Exception as e:
                                 logger.error(f"❌ Failed to end call tracking: {e}")
                         

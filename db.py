@@ -70,6 +70,8 @@ def init_db():
         call_to TEXT,
         duration_seconds INTEGER DEFAULT 0,
         cost_usd REAL DEFAULT 0.0,
+        revenue_usd REAL DEFAULT 0.0,
+        profit_usd REAL DEFAULT 0.0,
         started_at TEXT DEFAULT CURRENT_TIMESTAMP,
         ended_at TEXT,
         status TEXT DEFAULT 'active',
@@ -87,6 +89,8 @@ def init_db():
         total_calls INTEGER DEFAULT 0,
         total_minutes REAL DEFAULT 0.0,
         total_cost_usd REAL DEFAULT 0.0,
+        total_revenue_usd REAL DEFAULT 0.0,
+        total_profit_usd REAL DEFAULT 0.0,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(user_id) REFERENCES users(id),
         UNIQUE(user_id, month)
@@ -117,6 +121,12 @@ def init_db():
     add_column_if_missing(conn, "agents", "settings_json", "TEXT")  # for future use
     add_column_if_missing(conn, "agents", "google_calendar_credentials", "TEXT")  # Google OAuth tokens
     add_column_if_missing(conn, "agents", "google_calendar_id", "TEXT")  # Calendar ID (default = 'primary')
+    
+    # Usage tracking migrations
+    add_column_if_missing(conn, "call_usage", "revenue_usd", "REAL DEFAULT 0.0")
+    add_column_if_missing(conn, "call_usage", "profit_usd", "REAL DEFAULT 0.0")
+    add_column_if_missing(conn, "monthly_usage", "total_revenue_usd", "REAL DEFAULT 0.0")
+    add_column_if_missing(conn, "monthly_usage", "total_profit_usd", "REAL DEFAULT 0.0")
     
     conn.commit()
     conn.close()
@@ -429,19 +439,23 @@ def start_call_tracking(user_id: int, agent_id: int, call_sid: str, call_from: s
     return call_id
 
 
-def end_call_tracking(call_sid: str, duration_seconds: int, cost_usd: float):
-    """End call tracking and calculate cost"""
+def end_call_tracking(call_sid: str, duration_seconds: int, cost_usd: float, revenue_usd: float):
+    """End call tracking and calculate cost, revenue, and profit"""
     conn = get_conn()
     cur = conn.cursor()
+    
+    profit_usd = revenue_usd - cost_usd
     
     cur.execute("""
         UPDATE call_usage 
         SET duration_seconds = ?,
             cost_usd = ?,
+            revenue_usd = ?,
+            profit_usd = ?,
             ended_at = CURRENT_TIMESTAMP,
             status = 'completed'
         WHERE call_sid = ?
-    """, (duration_seconds, cost_usd, call_sid))
+    """, (duration_seconds, cost_usd, revenue_usd, profit_usd, call_sid))
     
     # Get user_id for monthly summary
     cur.execute("SELECT user_id FROM call_usage WHERE call_sid = ?", (call_sid,))
@@ -454,13 +468,15 @@ def end_call_tracking(call_sid: str, duration_seconds: int, cost_usd: float):
         
         # Update monthly summary
         cur.execute("""
-            INSERT INTO monthly_usage (user_id, month, total_calls, total_minutes, total_cost_usd)
-            VALUES (?, ?, 1, ?, ?)
+            INSERT INTO monthly_usage (user_id, month, total_calls, total_minutes, total_cost_usd, total_revenue_usd, total_profit_usd)
+            VALUES (?, ?, 1, ?, ?, ?, ?)
             ON CONFLICT(user_id, month) DO UPDATE SET
                 total_calls = total_calls + 1,
                 total_minutes = total_minutes + ?,
-                total_cost_usd = total_cost_usd + ?
-        """, (user_id, month, minutes, cost_usd, minutes, cost_usd))
+                total_cost_usd = total_cost_usd + ?,
+                total_revenue_usd = total_revenue_usd + ?,
+                total_profit_usd = total_profit_usd + ?
+        """, (user_id, month, minutes, cost_usd, revenue_usd, profit_usd, minutes, cost_usd, revenue_usd, profit_usd))
     
     conn.commit()
     conn.close()
@@ -476,7 +492,7 @@ def get_user_usage(user_id: int, month: str = None):
     
     # Get monthly summary
     cur.execute("""
-        SELECT total_calls, total_minutes, total_cost_usd
+        SELECT total_calls, total_minutes, total_cost_usd, total_revenue_usd, total_profit_usd
         FROM monthly_usage
         WHERE user_id = ? AND month = ?
     """, (user_id, month))
@@ -488,14 +504,18 @@ def get_user_usage(user_id: int, month: str = None):
             "month": month,
             "total_calls": row[0],
             "total_minutes": round(row[1], 2),
-            "total_cost_usd": round(row[2], 2)
+            "total_cost_usd": round(row[2], 4),
+            "total_revenue_usd": round(row[3], 2),
+            "total_profit_usd": round(row[4], 2)
         }
     else:
         result = {
             "month": month,
             "total_calls": 0,
             "total_minutes": 0.0,
-            "total_cost_usd": 0.0
+            "total_cost_usd": 0.0,
+            "total_revenue_usd": 0.0,
+            "total_profit_usd": 0.0
         }
     
     conn.close()
@@ -523,10 +543,21 @@ def get_call_history(user_id: int, limit: int = 50):
     return calls
 
 
-def calculate_call_cost(duration_seconds: int, price_per_minute: float = 0.05) -> float:
-    """Calculate cost based on duration and rate"""
+def calculate_call_cost(duration_seconds: int, cost_per_minute: float = 0.05) -> float:
+    """Calculate YOUR cost based on duration"""
     minutes = duration_seconds / 60.0
-    return round(minutes * price_per_minute, 4)
+    return round(minutes * cost_per_minute, 4)
+
+
+def calculate_call_revenue(duration_seconds: int, revenue_per_minute: float = 0.25) -> float:
+    """Calculate revenue to charge customer (5x your cost)"""
+    minutes = duration_seconds / 60.0
+    return round(minutes * revenue_per_minute, 4)
+
+
+def calculate_call_profit(cost_usd: float, revenue_usd: float) -> float:
+    """Calculate profit (revenue - cost)"""
+    return round(revenue_usd - cost_usd, 4)
 
 def get_agent_by_id(agent_id: int):
     conn = get_conn()
