@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from auth_routes import verify_token  # your JWT verify function
-from db import create_agent, list_agents, get_agent, update_agent, delete_agent, get_user_usage, get_call_history
+from db import create_agent, list_agents, get_agent, update_agent, delete_agent, get_user_usage, get_call_history, get_user_credits, add_credits, get_credit_transactions
 from google_calendar import get_google_oauth_url, handle_google_callback, disconnect_google_calendar
 from fastapi.responses import RedirectResponse, HTMLResponse
 
@@ -40,6 +40,11 @@ class UpdateAgentRequest(BaseModel):
     provider: Optional[str] = None
     voice: Optional[str] = None
     tools: Optional[ToolsModel] = None
+
+class PurchaseCreditsRequest(BaseModel):
+    amount: float
+    payment_method: Optional[str] = None
+    transaction_id: Optional[str] = None
 
 class AgentOut(BaseModel):
     id: int
@@ -277,3 +282,42 @@ def get_calls(user=Depends(verify_token), limit: int = 50):
     user_id = user["id"]
     calls = get_call_history(user_id, limit=limit)
     return {"calls": calls}
+
+
+# ========== Credits System Endpoints ==========
+
+@router.get("/credits/balance")
+def get_credits_balance(user=Depends(verify_token)):
+    """Get user's current credit balance"""
+    user_id = user["id"]
+    credits = get_user_credits(user_id)
+    return credits
+
+
+@router.post("/credits/purchase")
+def purchase_credits(payload: PurchaseCreditsRequest, user=Depends(verify_token)):
+    """Add credits to user's account (after successful payment)"""
+    user_id = user["id"]
+    
+    # In production, verify payment with Stripe/PayPal here
+    # For now, we'll just add the credits
+    
+    description = f"Credit purchase: ${payload.amount}"
+    if payload.transaction_id:
+        description += f" (Transaction: {payload.transaction_id})"
+    
+    new_balance = add_credits(user_id, payload.amount, description)
+    
+    return {
+        "ok": True,
+        "amount_added": payload.amount,
+        "new_balance": new_balance
+    }
+
+
+@router.get("/credits/transactions")
+def get_transactions(user=Depends(verify_token), limit: int = 50):
+    """Get credit transaction history"""
+    user_id = user["id"]
+    transactions = get_credit_transactions(user_id, limit=limit)
+    return {"transactions": transactions}

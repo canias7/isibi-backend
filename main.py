@@ -3,7 +3,7 @@ import json
 import asyncio
 import websockets
 import logging
-from db import get_agent_prompt, init_db, get_agent_by_id, start_call_tracking, end_call_tracking, calculate_call_cost, calculate_call_revenue
+from db import get_agent_prompt, init_db, get_agent_by_id, start_call_tracking, end_call_tracking, calculate_call_cost, calculate_call_revenue, get_user_credits, deduct_credits
 from prompt_api import router as prompt_router
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -299,6 +299,15 @@ async def handle_media_stream(websocket: WebSocket):
                                 # Track call usage
                                 if agent:
                                     owner_user_id = agent.get('owner_user_id')
+                                    
+                                    # Check if user has credits
+                                    credits = get_user_credits(owner_user_id)
+                                    if credits["balance"] <= 0:
+                                        logger.warning(f"⚠️ User {owner_user_id} has no credits! Balance: ${credits['balance']}")
+                                        # Call will proceed but be tracked - you can choose to block here
+                                    else:
+                                        logger.info(f"💳 User has ${credits['balance']:.2f} in credits")
+                                    
                                     # Get call info from Twilio data
                                     call_from = data["start"].get("callSid", "unknown")
                                     call_to = agent.get("phone_number", "unknown")
@@ -420,16 +429,30 @@ async def handle_media_stream(websocket: WebSocket):
                                 # YOUR COST: What you pay (e.g., $0.05/min)
                                 cost = calculate_call_cost(duration_seconds, cost_per_minute=0.05)
                                 
-                                # CUSTOMER REVENUE: What you charge (5x your cost = $0.25/min)
-                                revenue = calculate_call_revenue(duration_seconds, revenue_per_minute=0.25)
+                                # CUSTOMER CHARGE: 5x your cost = $0.25/min (THIS IS IN CREDITS)
+                                credits_to_deduct = calculate_call_revenue(duration_seconds, revenue_per_minute=0.25)
                                 
                                 # PROFIT: What you make
-                                profit = revenue - cost
+                                profit = credits_to_deduct - cost
                                 
-                                end_call_tracking(stream_sid, duration_seconds, cost, revenue)
+                                # Save call record
+                                end_call_tracking(stream_sid, duration_seconds, cost, credits_to_deduct)
                                 
-                                logger.info(f"📊 Call ended: {duration_seconds}s")
-                                logger.info(f"💰 Cost: ${cost:.4f} | Revenue: ${revenue:.4f} | Profit: ${profit:.4f}")
+                                # Deduct credits from user's balance
+                                owner_user_id = agent.get('owner_user_id')
+                                result = deduct_credits(
+                                    user_id=owner_user_id,
+                                    amount=credits_to_deduct,
+                                    description=f"Call to {agent.get('name')} ({duration_seconds}s)"
+                                )
+                                
+                                if result["success"]:
+                                    logger.info(f"📊 Call ended: {duration_seconds}s")
+                                    logger.info(f"💰 Cost: ${cost:.4f} | Credits deducted: ${credits_to_deduct:.4f}")
+                                    logger.info(f"💳 Remaining balance: ${result['balance']:.2f}")
+                                else:
+                                    logger.warning(f"⚠️ Credit deduction failed: {result.get('error')}")
+                                    
                             except Exception as e:
                                 logger.error(f"❌ Failed to end call tracking: {e}")
                         

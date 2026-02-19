@@ -97,6 +97,35 @@ def init_db():
     )
     """)
     
+    # Credits balance table
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS user_credits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL UNIQUE,
+        balance REAL DEFAULT 0.0,
+        total_purchased REAL DEFAULT 0.0,
+        total_used REAL DEFAULT 0.0,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )
+    """)
+    
+    # Credit transactions table (purchases and usage)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS credit_transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        amount REAL NOT NULL,
+        type TEXT NOT NULL,
+        description TEXT,
+        balance_after REAL NOT NULL,
+        call_id INTEGER,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id),
+        FOREIGN KEY(call_id) REFERENCES call_usage(id)
+    )
+    """)
+    
     # Pricing plans table
     cur.execute("""
     CREATE TABLE IF NOT EXISTS pricing_plans (
@@ -558,6 +587,145 @@ def calculate_call_revenue(duration_seconds: int, revenue_per_minute: float = 0.
 def calculate_call_profit(cost_usd: float, revenue_usd: float) -> float:
     """Calculate profit (revenue - cost)"""
     return round(revenue_usd - cost_usd, 4)
+
+
+# ========== Credits System ==========
+
+def get_user_credits(user_id: int):
+    """Get user's current credit balance"""
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    cur.execute("""
+        SELECT balance, total_purchased, total_used
+        FROM user_credits
+        WHERE user_id = ?
+    """, (user_id,))
+    
+    row = cur.fetchone()
+    
+    if row:
+        result = {
+            "balance": round(row[0], 2),
+            "total_purchased": round(row[1], 2),
+            "total_used": round(row[2], 2)
+        }
+    else:
+        # Initialize credits for new user
+        cur.execute("""
+            INSERT INTO user_credits (user_id, balance, total_purchased, total_used)
+            VALUES (?, 0.0, 0.0, 0.0)
+        """, (user_id,))
+        conn.commit()
+        result = {
+            "balance": 0.0,
+            "total_purchased": 0.0,
+            "total_used": 0.0
+        }
+    
+    conn.close()
+    return result
+
+
+def add_credits(user_id: int, amount: float, description: str = "Credit purchase"):
+    """Add credits to user's account (when they buy credits)"""
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    # Get or create user credits
+    get_user_credits(user_id)
+    
+    # Update balance
+    cur.execute("""
+        UPDATE user_credits
+        SET balance = balance + ?,
+            total_purchased = total_purchased + ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+    """, (amount, amount, user_id))
+    
+    # Get new balance
+    cur.execute("SELECT balance FROM user_credits WHERE user_id = ?", (user_id,))
+    new_balance = cur.fetchone()[0]
+    
+    # Record transaction
+    cur.execute("""
+        INSERT INTO credit_transactions (user_id, amount, type, description, balance_after)
+        VALUES (?, ?, 'purchase', ?, ?)
+    """, (user_id, amount, description, new_balance))
+    
+    conn.commit()
+    conn.close()
+    
+    return new_balance
+
+
+def deduct_credits(user_id: int, amount: float, call_id: int = None, description: str = "Call usage"):
+    """Deduct credits from user's account (when they use the service)"""
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    # Check balance
+    cur.execute("SELECT balance FROM user_credits WHERE user_id = ?", (user_id,))
+    row = cur.fetchone()
+    
+    if not row:
+        conn.close()
+        return {"success": False, "error": "No credit account found"}
+    
+    current_balance = row[0]
+    
+    if current_balance < amount:
+        conn.close()
+        return {"success": False, "error": "Insufficient credits", "balance": current_balance}
+    
+    # Deduct credits
+    new_balance = current_balance - amount
+    
+    cur.execute("""
+        UPDATE user_credits
+        SET balance = ?,
+            total_used = total_used + ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+    """, (new_balance, amount, user_id))
+    
+    # Record transaction
+    cur.execute("""
+        INSERT INTO credit_transactions (user_id, amount, type, description, balance_after, call_id)
+        VALUES (?, ?, 'usage', ?, ?, ?)
+    """, (user_id, -amount, description, new_balance, call_id))
+    
+    conn.commit()
+    conn.close()
+    
+    return {"success": True, "balance": new_balance, "deducted": amount}
+
+
+def get_credit_transactions(user_id: int, limit: int = 50):
+    """Get credit transaction history"""
+    conn = get_conn()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    
+    cur.execute("""
+        SELECT *
+        FROM credit_transactions
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        LIMIT ?
+    """, (user_id, limit))
+    
+    transactions = [dict(row) for row in cur.fetchall()]
+    conn.close()
+    
+    return transactions
+
+
+def check_credits_available(user_id: int, required_amount: float) -> bool:
+    """Check if user has enough credits"""
+    credits = get_user_credits(user_id)
+    return credits["balance"] >= required_amount
 
 def get_agent_by_id(agent_id: int):
     conn = get_conn()
