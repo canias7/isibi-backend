@@ -58,6 +58,52 @@ def init_db():
         FOREIGN KEY(owner_user_id) REFERENCES users(id)
     )
     """)
+    
+    # Usage tracking table
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS call_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        agent_id INTEGER NOT NULL,
+        call_sid TEXT,
+        call_from TEXT,
+        call_to TEXT,
+        duration_seconds INTEGER DEFAULT 0,
+        cost_usd REAL DEFAULT 0.0,
+        started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        ended_at TEXT,
+        status TEXT DEFAULT 'active',
+        FOREIGN KEY(user_id) REFERENCES users(id),
+        FOREIGN KEY(agent_id) REFERENCES agents(id)
+    )
+    """)
+    
+    # Monthly usage summary table
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS monthly_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        month TEXT NOT NULL,
+        total_calls INTEGER DEFAULT 0,
+        total_minutes REAL DEFAULT 0.0,
+        total_cost_usd REAL DEFAULT 0.0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id),
+        UNIQUE(user_id, month)
+    )
+    """)
+    
+    # Pricing plans table
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS pricing_plans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        price_per_minute REAL NOT NULL,
+        included_minutes INTEGER DEFAULT 0,
+        monthly_fee REAL DEFAULT 0.0,
+        active INTEGER DEFAULT 1
+    )
+    """)
 
     # --- MIGRATIONS (keep Render DB in sync) ---
     add_column_if_missing(conn, "agents", "phone_number", "TEXT")
@@ -362,6 +408,125 @@ def delete_agent(owner_user_id: int, agent_id: int):
     deleted = cur.rowcount > 0
     conn.close()
     return deleted
+
+
+# ========== Usage Tracking Functions ==========
+
+def start_call_tracking(user_id: int, agent_id: int, call_sid: str, call_from: str, call_to: str):
+    """Start tracking a new call"""
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    cur.execute("""
+        INSERT INTO call_usage (user_id, agent_id, call_sid, call_from, call_to, status)
+        VALUES (?, ?, ?, ?, ?, 'active')
+    """, (user_id, agent_id, call_sid, call_from, call_to))
+    
+    conn.commit()
+    call_id = cur.lastrowid
+    conn.close()
+    
+    return call_id
+
+
+def end_call_tracking(call_sid: str, duration_seconds: int, cost_usd: float):
+    """End call tracking and calculate cost"""
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    cur.execute("""
+        UPDATE call_usage 
+        SET duration_seconds = ?,
+            cost_usd = ?,
+            ended_at = CURRENT_TIMESTAMP,
+            status = 'completed'
+        WHERE call_sid = ?
+    """, (duration_seconds, cost_usd, call_sid))
+    
+    # Get user_id for monthly summary
+    cur.execute("SELECT user_id FROM call_usage WHERE call_sid = ?", (call_sid,))
+    row = cur.fetchone()
+    
+    if row:
+        user_id = row[0]
+        month = datetime.now().strftime("%Y-%m")
+        minutes = duration_seconds / 60.0
+        
+        # Update monthly summary
+        cur.execute("""
+            INSERT INTO monthly_usage (user_id, month, total_calls, total_minutes, total_cost_usd)
+            VALUES (?, ?, 1, ?, ?)
+            ON CONFLICT(user_id, month) DO UPDATE SET
+                total_calls = total_calls + 1,
+                total_minutes = total_minutes + ?,
+                total_cost_usd = total_cost_usd + ?
+        """, (user_id, month, minutes, cost_usd, minutes, cost_usd))
+    
+    conn.commit()
+    conn.close()
+
+
+def get_user_usage(user_id: int, month: str = None):
+    """Get usage statistics for a user"""
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    if not month:
+        month = datetime.now().strftime("%Y-%m")
+    
+    # Get monthly summary
+    cur.execute("""
+        SELECT total_calls, total_minutes, total_cost_usd
+        FROM monthly_usage
+        WHERE user_id = ? AND month = ?
+    """, (user_id, month))
+    
+    row = cur.fetchone()
+    
+    if row:
+        result = {
+            "month": month,
+            "total_calls": row[0],
+            "total_minutes": round(row[1], 2),
+            "total_cost_usd": round(row[2], 2)
+        }
+    else:
+        result = {
+            "month": month,
+            "total_calls": 0,
+            "total_minutes": 0.0,
+            "total_cost_usd": 0.0
+        }
+    
+    conn.close()
+    return result
+
+
+def get_call_history(user_id: int, limit: int = 50):
+    """Get recent call history for a user"""
+    conn = get_conn()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    
+    cur.execute("""
+        SELECT c.*, a.name as agent_name
+        FROM call_usage c
+        LEFT JOIN agents a ON c.agent_id = a.id
+        WHERE c.user_id = ?
+        ORDER BY c.started_at DESC
+        LIMIT ?
+    """, (user_id, limit))
+    
+    calls = [dict(row) for row in cur.fetchall()]
+    conn.close()
+    
+    return calls
+
+
+def calculate_call_cost(duration_seconds: int, price_per_minute: float = 0.05) -> float:
+    """Calculate cost based on duration and rate"""
+    minutes = duration_seconds / 60.0
+    return round(minutes * price_per_minute, 4)
 
 def get_agent_by_id(agent_id: int):
     conn = get_conn()

@@ -3,7 +3,7 @@ import json
 import asyncio
 import websockets
 import logging
-from db import get_agent_prompt, init_db, get_agent_by_id
+from db import get_agent_prompt, init_db, get_agent_by_id, start_call_tracking, end_call_tracking, calculate_call_cost
 from prompt_api import router as prompt_router
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -19,6 +19,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from auth import verify_token
 from twilio.twiml.voice_response import VoiceResponse, Connect, Stream
 from google_calendar import check_availability, create_appointment, list_appointments
+from datetime import datetime
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -286,11 +287,33 @@ async def handle_media_stream(websocket: WebSocket):
                         logger.info(f"📦 customParameters: {custom}")
                         logger.info(f"🆔 agent_id from customParameters: {agent_id}")
                         
+                        # Start tracking this call
+                        call_start_time = datetime.now()
+                        
                         # Load agent configuration
                         if agent_id:
                             try:
                                 agent = get_agent_by_id(int(agent_id))
                                 logger.info(f"✅ Agent loaded: {agent.get('name') if agent else None}")
+                                
+                                # Track call usage
+                                if agent:
+                                    owner_user_id = agent.get('owner_user_id')
+                                    # Get call info from Twilio data
+                                    call_from = data["start"].get("callSid", "unknown")
+                                    call_to = agent.get("phone_number", "unknown")
+                                    
+                                    try:
+                                        start_call_tracking(
+                                            user_id=owner_user_id,
+                                            agent_id=int(agent_id),
+                                            call_sid=stream_sid,
+                                            call_from=call_from,
+                                            call_to=call_to
+                                        )
+                                        logger.info(f"📊 Call tracking started for user {owner_user_id}")
+                                    except Exception as e:
+                                        logger.error(f"❌ Failed to start call tracking: {e}")
                                 
                                 if agent:
                                     first_message = agent.get("first_message")
@@ -387,6 +410,22 @@ async def handle_media_stream(websocket: WebSocket):
 
                     elif evt == "stop":
                         print("⏹️ stop received")
+                        
+                        # End call tracking
+                        if stream_sid and agent:
+                            try:
+                                call_end_time = datetime.now()
+                                duration_seconds = int((call_end_time - call_start_time).total_seconds())
+                                
+                                # Calculate cost ($0.05 per minute default)
+                                cost = calculate_call_cost(duration_seconds, price_per_minute=0.05)
+                                
+                                end_call_tracking(stream_sid, duration_seconds, cost)
+                                
+                                logger.info(f"📊 Call ended: {duration_seconds}s, Cost: ${cost:.4f}")
+                            except Exception as e:
+                                logger.error(f"❌ Failed to end call tracking: {e}")
+                        
                         break
 
             except WebSocketDisconnect:

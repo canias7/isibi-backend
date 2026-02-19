@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from auth_routes import verify_token  # your JWT verify function
-from db import create_agent, list_agents, get_agent, update_agent, delete_agent  # the functions you added in db.py
+from db import create_agent, list_agents, get_agent, update_agent, delete_agent, get_user_usage, get_call_history
 from google_calendar import get_google_oauth_url, handle_google_callback, disconnect_google_calendar
 from fastapi.responses import RedirectResponse, HTMLResponse
 
@@ -251,3 +251,29 @@ def google_calendar_disconnect(agent_id: int, user=Depends(verify_token)):
         raise HTTPException(status_code=404, detail="Agent not found or calendar not connected")
     
     return {"ok": True, "disconnected": True}
+
+
+# ========== Usage & Billing Endpoints ==========
+
+@router.get("/usage/current")
+def get_current_usage(user=Depends(verify_token)):
+    """Get current month's usage for the logged-in user"""
+    user_id = user["id"]
+    usage = get_user_usage(user_id)
+    return usage
+
+
+@router.get("/usage/history")
+def get_usage_history(user=Depends(verify_token), month: Optional[str] = None):
+    """Get usage for a specific month (YYYY-MM format)"""
+    user_id = user["id"]
+    usage = get_user_usage(user_id, month=month)
+    return usage
+
+
+@router.get("/usage/calls")
+def get_calls(user=Depends(verify_token), limit: int = 50):
+    """Get recent call history"""
+    user_id = user["id"]
+    calls = get_call_history(user_id, limit=limit)
+    return {"calls": calls}
