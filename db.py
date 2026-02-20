@@ -126,6 +126,19 @@ def init_db():
     )
     """)
     
+    # User-level Google credentials (used during agent creation)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS user_google_credentials (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL UNIQUE,
+        google_calendar_credentials TEXT,
+        google_calendar_id TEXT DEFAULT 'primary',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )
+    """)
+    
     # Pricing plans table
     cur.execute("""
     CREATE TABLE IF NOT EXISTS pricing_plans (
@@ -726,6 +739,74 @@ def check_credits_available(user_id: int, required_amount: float) -> bool:
     """Check if user has enough credits"""
     credits = get_user_credits(user_id)
     return credits["balance"] >= required_amount
+
+
+# ========== User-Level Google Calendar Functions ==========
+
+def get_user_google_credentials(user_id: int):
+    """Get user's Google Calendar credentials (before assigning to agent)"""
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    cur.execute("""
+        SELECT google_calendar_credentials, google_calendar_id
+        FROM user_google_credentials
+        WHERE user_id = ?
+    """, (user_id,))
+    
+    row = cur.fetchone()
+    conn.close()
+    
+    if row and row[0]:
+        return {
+            "credentials": row[0],
+            "calendar_id": row[1] or "primary"
+        }
+    return None
+
+
+def save_user_google_credentials(user_id: int, credentials_json: str, calendar_id: str = "primary"):
+    """Save Google credentials at user level (during OAuth flow)"""
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    cur.execute("""
+        INSERT INTO user_google_credentials (user_id, google_calendar_credentials, google_calendar_id)
+        VALUES (?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            google_calendar_credentials = ?,
+            google_calendar_id = ?,
+            updated_at = CURRENT_TIMESTAMP
+    """, (user_id, credentials_json, calendar_id, credentials_json, calendar_id))
+    
+    conn.commit()
+    conn.close()
+
+
+def assign_google_calendar_to_agent(user_id: int, agent_id: int):
+    """Copy user's Google credentials to a specific agent"""
+    # Get user credentials
+    user_creds = get_user_google_credentials(user_id)
+    
+    if not user_creds:
+        return False
+    
+    # Assign to agent
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    cur.execute("""
+        UPDATE agents
+        SET google_calendar_credentials = ?,
+            google_calendar_id = ?
+        WHERE id = ? AND owner_user_id = ?
+    """, (user_creds["credentials"], user_creds["calendar_id"], agent_id, user_id))
+    
+    conn.commit()
+    changed = cur.rowcount > 0
+    conn.close()
+    
+    return changed
 
 def get_agent_by_id(agent_id: int):
     conn = get_conn()

@@ -101,21 +101,29 @@ def handle_google_callback(code: str, state: str) -> Dict:
         "scopes": credentials.scopes,
     }
     
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        UPDATE agents 
-        SET google_calendar_credentials = ?,
-            google_calendar_id = 'primary'
-        WHERE id = ? AND owner_user_id = ?
-        """,
-        (json.dumps(creds_json), agent_id, user_id)
-    )
-    conn.commit()
-    conn.close()
+    creds_json_str = json.dumps(creds_json)
     
-    return {"ok": True, "agent_id": agent_id}
+    # If agent_id is 0, store at user level (for agent creation flow)
+    # Otherwise, store directly to agent
+    if agent_id == 0:
+        from db import save_user_google_credentials
+        save_user_google_credentials(user_id, creds_json_str, "primary")
+    else:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE agents 
+            SET google_calendar_credentials = ?,
+                google_calendar_id = 'primary'
+            WHERE id = ? AND owner_user_id = ?
+            """,
+            (creds_json_str, agent_id, user_id)
+        )
+        conn.commit()
+        conn.close()
+    
+    return {"ok": True, "agent_id": agent_id, "user_id": user_id}
 
 
 def get_calendar_credentials(agent_id: int) -> Optional[Credentials]:

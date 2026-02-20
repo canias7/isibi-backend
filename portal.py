@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from auth_routes import verify_token  # your JWT verify function
-from db import create_agent, list_agents, get_agent, update_agent, delete_agent, get_user_usage, get_call_history, get_user_credits, add_credits, get_credit_transactions
+from db import create_agent, list_agents, get_agent, update_agent, delete_agent, get_user_usage, get_call_history, get_user_credits, add_credits, get_credit_transactions, get_user_google_credentials, assign_google_calendar_to_agent
 from google_calendar import get_google_oauth_url, handle_google_callback, disconnect_google_calendar
 from fastapi.responses import RedirectResponse, HTMLResponse
 import os
@@ -36,6 +36,9 @@ class CreateAgentRequest(BaseModel):
 
     # tools section
     tools: Optional[ToolsModel] = None
+    
+    # integrations
+    enable_calendar: Optional[bool] = False  # If true, assign user's calendar to this agent
 
 class UpdateAgentRequest(BaseModel):
     phone_number: Optional[str] = None
@@ -109,6 +112,17 @@ def api_create_agent(payload: CreateAgentRequest, user=Depends(verify_token)):
         voice=payload.voice,
         tools=(payload.tools.model_dump() if payload.tools else {}),
     )
+    
+    # If user wants calendar enabled, assign their credentials to this agent
+    if payload.enable_calendar:
+        success = assign_google_calendar_to_agent(owner_user_id, agent_id)
+        if not success:
+            # Calendar credentials not found, but agent was created
+            return {
+                "ok": True,
+                "agent_id": agent_id,
+                "warning": "Agent created but calendar not connected. Connect calendar first."
+            }
 
     return {"ok": True, "agent_id": agent_id}
 
@@ -262,6 +276,61 @@ def google_calendar_disconnect(agent_id: int, user=Depends(verify_token)):
         raise HTTPException(status_code=404, detail="Agent not found or calendar not connected")
     
     return {"ok": True, "disconnected": True}
+
+
+# ========== User-Level Google Calendar (for agent creation flow) ==========
+
+@router.get("/google/auth")
+def google_auth_user_level(user=Depends(verify_token)):
+    """
+    Start Google Calendar OAuth for the user (not per-agent).
+    Use this during agent creation before agent exists.
+    """
+    user_id = user["id"]
+    
+    try:
+        # Use agent_id = 0 as placeholder, will be updated later
+        auth_url = get_google_oauth_url(agent_id=0, user_id=user_id)
+        return {"auth_url": auth_url}
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/google/status")
+def google_status_user_level(user=Depends(verify_token)):
+    """
+    Check if user has connected Google Calendar.
+    Returns the credentials that can be assigned to any agent.
+    """
+    user_id = user["id"]
+    
+    creds = get_user_google_credentials(user_id)
+    
+    return {
+        "connected": bool(creds),
+        "has_credentials": bool(creds)
+    }
+
+
+@router.post("/agents/{agent_id}/google/assign")
+def assign_calendar_to_agent(agent_id: int, user=Depends(verify_token)):
+    """
+    Assign user's Google Calendar credentials to an agent.
+    Use this after creating an agent to enable calendar features.
+    """
+    user_id = user["id"]
+    
+    # Verify user owns this agent
+    agent = get_agent(user_id, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    success = assign_google_calendar_to_agent(user_id, agent_id)
+    
+    if not success:
+        raise HTTPException(status_code=400, detail="No Google credentials found. Connect calendar first.")
+    
+    return {"ok": True, "assigned": True}
 
 
 # ========== Usage & Billing Endpoints ==========
