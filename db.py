@@ -334,7 +334,16 @@ def verify_user(email: str, password: str):
     row = get_user_by_email(email)
     if not row:
         return None
-    user_id, user_email, password_hash, tenant_phone = row
+    
+    # Handle both SQLite (tuple) and PostgreSQL (dict) row formats
+    if isinstance(row, dict):
+        user_id = row['id']
+        user_email = row['email']
+        password_hash = row['password_hash']
+        tenant_phone = row.get('tenant_phone')
+    else:
+        user_id, user_email, password_hash, tenant_phone = row
+    
     ok = bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
     if not ok:
         return None
