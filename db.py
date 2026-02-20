@@ -623,21 +623,40 @@ def get_user_credits(user_id: int):
             "total_purchased": round(row[1], 2),
             "total_used": round(row[2], 2)
         }
-    else:
-        # Initialize credits for new user
+        conn.close()
+        return result
+    
+    # User doesn't have credits record yet - create one
+    try:
         cur.execute("""
             INSERT INTO user_credits (user_id, balance, total_purchased, total_used)
             VALUES (?, 0.0, 0.0, 0.0)
         """, (user_id,))
         conn.commit()
-        result = {
-            "balance": 0.0,
-            "total_purchased": 0.0,
-            "total_used": 0.0
-        }
+    except sqlite3.IntegrityError:
+        # Race condition - record was created by another thread
+        # Just fetch it again
+        cur.execute("""
+            SELECT balance, total_purchased, total_used
+            FROM user_credits
+            WHERE user_id = ?
+        """, (user_id,))
+        row = cur.fetchone()
+        if row:
+            result = {
+                "balance": round(row[0], 2),
+                "total_purchased": round(row[1], 2),
+                "total_used": round(row[2], 2)
+            }
+            conn.close()
+            return result
     
     conn.close()
-    return result
+    return {
+        "balance": 0.0,
+        "total_purchased": 0.0,
+        "total_used": 0.0
+    }
 
 
 def add_credits(user_id: int, amount: float, description: str = "Credit purchase"):
