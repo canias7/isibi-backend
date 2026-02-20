@@ -16,9 +16,7 @@ if USE_POSTGRES:
             conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
             return conn
         
-        # SQL placeholder for PostgreSQL
-        def sql_placeholder():
-            return "%s"
+        PH = "%s"  # SQL placeholder for PostgreSQL
         
         print("✅ Using PostgreSQL database")
     except ImportError as e:
@@ -36,8 +34,7 @@ if USE_POSTGRES:
             conn.execute("PRAGMA busy_timeout=30000;")
             return conn
         
-        def sql_placeholder():
-            return "?"
+        PH = "?"  # SQL placeholder for SQLite
 else:
     import sqlite3
     
@@ -49,6 +46,10 @@ else:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA busy_timeout=30000;")
         return conn
+    
+    PH = "?"  # SQL placeholder for SQLite
+    
+    print("⚠️ Using SQLite database (local dev)")
     
     # SQL placeholder for SQLite
     def sql_placeholder():
@@ -254,7 +255,7 @@ def get_tenant_by_number(phone):
     cur = conn.cursor()
 
     cur.execute(
-        "SELECT id, phone_number FROM tenants WHERE phone_number = ?",
+        f"SELECT id, phone_number FROM tenants WHERE phone_number = {PH}",
         (phone,)
     )
 
@@ -268,7 +269,7 @@ def get_agent_prompt(tenant_id):
     cur = conn.cursor()
 
     cur.execute(
-        "SELECT agent_prompt FROM tenants WHERE id = ?",
+        f"SELECT agent_prompt FROM tenants WHERE id = {PH}",
         (tenant_id,)
     )
 
@@ -282,7 +283,7 @@ def set_agent_prompt(tenant_id, prompt):
     cur = conn.cursor()
 
     cur.execute(
-        "UPDATE tenants SET agent_prompt = ? WHERE id = ?",
+        f"UPDATE tenants SET agent_prompt = {PH} WHERE id = {PH}",
         (prompt, tenant_id)
     )
 
@@ -295,7 +296,7 @@ def create_tenant_if_missing(phone_number: str):
     cur = conn.cursor()
 
     cur.execute(
-        "INSERT OR IGNORE INTO tenants (phone_number, agent_prompt) VALUES (?, ?)",
+        f"INSERT OR IGNORE INTO tenants (phone_number, agent_prompt) VALUES ({PH}, {PH})",
         (phone_number, "")
     )
 
@@ -312,7 +313,7 @@ def create_user(email: str, password: str, tenant_phone: str | None = None):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO users (email, password_hash, tenant_phone) VALUES (?, ?, ?)",
+        f"INSERT INTO users (email, password_hash, tenant_phone) VALUES ({PH}, {PH}, {PH})",
         (email.strip().lower(), password_hash, tenant_phone),
     )
     conn.commit()
@@ -322,7 +323,7 @@ def get_user_by_email(email: str):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        "SELECT id, email, password_hash, tenant_phone FROM users WHERE email = ?",
+        f"SELECT id, email, password_hash, tenant_phone FROM users WHERE email = {PH}",
         (email.strip().lower(),),
     )
     row = cur.fetchone()
@@ -372,7 +373,7 @@ def create_agent(
             first_message,
             tools_json
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES ({PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH})
         """,
         (
             owner_user_id,
@@ -411,7 +412,7 @@ def list_agents(owner_user_id: int):
             created_at,
             updated_at
         FROM agents
-        WHERE owner_user_id = ?
+        WHERE owner_user_id = {PH}
         ORDER BY id DESC
         """,
         (owner_user_id,)
@@ -455,7 +456,7 @@ def get_agent(owner_user_id: int, agent_id: int):
             system_prompt, voice, provider, first_message, tools_json,
             created_at, updated_at
         FROM agents
-        WHERE id = ? AND owner_user_id = ?
+        WHERE id = {PH} AND owner_user_id = {PH}
         """,
         (agent_id, owner_user_id)
     )
@@ -500,7 +501,7 @@ def update_agent(owner_user_id: int, agent_id: int, **fields):
     if not updates:
         return False  # nothing to update
 
-    set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
+    set_clause = ", ".join([f"{k} = {PH}" for k in updates.keys()])
     params = list(updates.values())
     params += [agent_id, owner_user_id]
 
@@ -512,7 +513,7 @@ def update_agent(owner_user_id: int, agent_id: int, **fields):
         UPDATE agents
         SET {set_clause},
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = ? AND owner_user_id = ?
+        WHERE id = {PH} AND owner_user_id = {PH}
         """,
         params
     )
@@ -528,7 +529,7 @@ def delete_agent(owner_user_id: int, agent_id: int):
     cur = conn.cursor()
     
     cur.execute(
-        "DELETE FROM agents WHERE id = ? AND owner_user_id = ?",
+        f"DELETE FROM agents WHERE id = {PH} AND owner_user_id = {PH}",
         (agent_id, owner_user_id)
     )
     
@@ -547,7 +548,7 @@ def start_call_tracking(user_id: int, agent_id: int, call_sid: str, call_from: s
     
     cur.execute("""
         INSERT INTO call_usage (user_id, agent_id, call_sid, call_from, call_to, status)
-        VALUES (?, ?, ?, ?, ?, 'active')
+        VALUES ({PH}, {PH}, {PH}, {PH}, {PH}, 'active')
     """, (user_id, agent_id, call_sid, call_from, call_to))
     
     conn.commit()
@@ -566,17 +567,17 @@ def end_call_tracking(call_sid: str, duration_seconds: int, cost_usd: float, rev
     
     cur.execute("""
         UPDATE call_usage 
-        SET duration_seconds = ?,
-            cost_usd = ?,
-            revenue_usd = ?,
-            profit_usd = ?,
+        SET duration_seconds = {PH},
+            cost_usd = {PH},
+            revenue_usd = {PH},
+            profit_usd = {PH},
             ended_at = CURRENT_TIMESTAMP,
             status = 'completed'
-        WHERE call_sid = ?
+        WHERE call_sid = {PH}
     """, (duration_seconds, cost_usd, revenue_usd, profit_usd, call_sid))
     
     # Get user_id for monthly summary
-    cur.execute("SELECT user_id FROM call_usage WHERE call_sid = ?", (call_sid,))
+    cur.execute(f"SELECT user_id FROM call_usage WHERE call_sid = {PH}", (call_sid,))
     row = cur.fetchone()
     
     if row:
@@ -587,7 +588,7 @@ def end_call_tracking(call_sid: str, duration_seconds: int, cost_usd: float, rev
         # Update monthly summary
         cur.execute("""
             INSERT INTO monthly_usage (user_id, month, total_calls, total_minutes, total_cost_usd, total_revenue_usd, total_profit_usd)
-            VALUES (?, ?, 1, ?, ?, ?, ?)
+            VALUES ({PH}, {PH}, 1, {PH}, {PH}, {PH}, {PH})
             ON CONFLICT(user_id, month) DO UPDATE SET
                 total_calls = total_calls + 1,
                 total_minutes = total_minutes + ?,
@@ -612,7 +613,7 @@ def get_user_usage(user_id: int, month: str = None):
     cur.execute("""
         SELECT total_calls, total_minutes, total_cost_usd, total_revenue_usd, total_profit_usd
         FROM monthly_usage
-        WHERE user_id = ? AND month = ?
+        WHERE user_id = {PH} AND month = {PH}
     """, (user_id, month))
     
     row = cur.fetchone()
@@ -649,7 +650,7 @@ def get_call_history(user_id: int, limit: int = 50):
         SELECT c.*, a.name as agent_name
         FROM call_usage c
         LEFT JOIN agents a ON c.agent_id = a.id
-        WHERE c.user_id = ?
+        WHERE c.user_id = {PH}
         ORDER BY c.started_at DESC
         LIMIT ?
     """, (user_id, limit))
@@ -687,7 +688,7 @@ def get_user_credits(user_id: int):
     cur.execute("""
         SELECT balance, total_purchased, total_used
         FROM user_credits
-        WHERE user_id = ?
+        WHERE user_id = {PH}
     """, (user_id,))
     
     row = cur.fetchone()
@@ -705,7 +706,7 @@ def get_user_credits(user_id: int):
     try:
         cur.execute("""
             INSERT INTO user_credits (user_id, balance, total_purchased, total_used)
-            VALUES (?, 0.0, 0.0, 0.0)
+            VALUES ({PH}, 0.0, 0.0, 0.0)
         """, (user_id,))
         conn.commit()
     except sqlite3.IntegrityError:
@@ -714,7 +715,7 @@ def get_user_credits(user_id: int):
         cur.execute("""
             SELECT balance, total_purchased, total_used
             FROM user_credits
-            WHERE user_id = ?
+            WHERE user_id = {PH}
         """, (user_id,))
         row = cur.fetchone()
         if row:
@@ -748,17 +749,17 @@ def add_credits(user_id: int, amount: float, description: str = "Credit purchase
         SET balance = balance + ?,
             total_purchased = total_purchased + ?,
             updated_at = CURRENT_TIMESTAMP
-        WHERE user_id = ?
+        WHERE user_id = {PH}
     """, (amount, amount, user_id))
     
     # Get new balance
-    cur.execute("SELECT balance FROM user_credits WHERE user_id = ?", (user_id,))
+    cur.execute(f"SELECT balance FROM user_credits WHERE user_id = {PH}", (user_id,))
     new_balance = cur.fetchone()[0]
     
     # Record transaction
     cur.execute("""
         INSERT INTO credit_transactions (user_id, amount, type, description, balance_after)
-        VALUES (?, ?, 'purchase', ?, ?)
+        VALUES ({PH}, {PH}, 'purchase', {PH}, {PH})
     """, (user_id, amount, description, new_balance))
     
     conn.commit()
@@ -773,7 +774,7 @@ def deduct_credits(user_id: int, amount: float, call_id: int = None, description
     cur = conn.cursor()
     
     # Check balance
-    cur.execute("SELECT balance FROM user_credits WHERE user_id = ?", (user_id,))
+    cur.execute(f"SELECT balance FROM user_credits WHERE user_id = {PH}", (user_id,))
     row = cur.fetchone()
     
     if not row:
@@ -791,16 +792,16 @@ def deduct_credits(user_id: int, amount: float, call_id: int = None, description
     
     cur.execute("""
         UPDATE user_credits
-        SET balance = ?,
+        SET balance = {PH},
             total_used = total_used + ?,
             updated_at = CURRENT_TIMESTAMP
-        WHERE user_id = ?
+        WHERE user_id = {PH}
     """, (new_balance, amount, user_id))
     
     # Record transaction
     cur.execute("""
         INSERT INTO credit_transactions (user_id, amount, type, description, balance_after, call_id)
-        VALUES (?, ?, 'usage', ?, ?, ?)
+        VALUES ({PH}, {PH}, 'usage', {PH}, {PH}, {PH})
     """, (user_id, -amount, description, new_balance, call_id))
     
     conn.commit()
@@ -817,7 +818,7 @@ def get_credit_transactions(user_id: int, limit: int = 50):
     cur.execute("""
         SELECT *
         FROM credit_transactions
-        WHERE user_id = ?
+        WHERE user_id = {PH}
         ORDER BY created_at DESC
         LIMIT ?
     """, (user_id, limit))
@@ -844,7 +845,7 @@ def get_user_google_credentials(user_id: int):
     cur.execute("""
         SELECT google_calendar_credentials, google_calendar_id
         FROM user_google_credentials
-        WHERE user_id = ?
+        WHERE user_id = {PH}
     """, (user_id,))
     
     row = cur.fetchone()
@@ -865,10 +866,10 @@ def save_user_google_credentials(user_id: int, credentials_json: str, calendar_i
     
     cur.execute("""
         INSERT INTO user_google_credentials (user_id, google_calendar_credentials, google_calendar_id)
-        VALUES (?, ?, ?)
+        VALUES ({PH}, {PH}, {PH})
         ON CONFLICT(user_id) DO UPDATE SET
-            google_calendar_credentials = ?,
-            google_calendar_id = ?,
+            google_calendar_credentials = {PH},
+            google_calendar_id = {PH},
             updated_at = CURRENT_TIMESTAMP
     """, (user_id, credentials_json, calendar_id, credentials_json, calendar_id))
     
@@ -890,9 +891,9 @@ def assign_google_calendar_to_agent(user_id: int, agent_id: int):
     
     cur.execute("""
         UPDATE agents
-        SET google_calendar_credentials = ?,
-            google_calendar_id = ?
-        WHERE id = ? AND owner_user_id = ?
+        SET google_calendar_credentials = {PH},
+            google_calendar_id = {PH}
+        WHERE id = {PH} AND owner_user_id = {PH}
     """, (user_creds["credentials"], user_creds["calendar_id"], agent_id, user_id))
     
     conn.commit()
@@ -904,7 +905,7 @@ def assign_google_calendar_to_agent(user_id: int, agent_id: int):
 def get_agent_by_id(agent_id: int):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM agents WHERE id = ?", (agent_id,))
+    cur.execute(f"SELECT * FROM agents WHERE id = {PH}", (agent_id,))
     row = cur.fetchone()
     conn.close()
     return dict(row) if row else None
@@ -912,7 +913,7 @@ def get_agent_by_id(agent_id: int):
 def get_agent_by_phone(phone_number: str):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM agents WHERE phone_number = ? LIMIT 1", (phone_number,))
+    cur.execute(f"SELECT * FROM agents WHERE phone_number = {PH} LIMIT 1", (phone_number,))
     row = cur.fetchone()
     conn.close()
     return dict(row) if row else None
