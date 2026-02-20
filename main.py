@@ -302,11 +302,25 @@ async def handle_media_stream(websocket: WebSocket):
                                     
                                     # Check if user has credits
                                     credits = get_user_credits(owner_user_id)
+                                    
                                     if credits["balance"] <= 0:
-                                        logger.warning(f"⚠️ User {owner_user_id} has no credits! Balance: ${credits['balance']}")
-                                        # Call will proceed but be tracked - you can choose to block here
+                                        logger.warning(f"❌ User {owner_user_id} has no credits! Balance: ${credits['balance']} - BLOCKING CALL")
+                                        
+                                        # Send low balance message and end call
+                                        await openai_ws.send(json.dumps({
+                                            "type": "response.create",
+                                            "response": {
+                                                "modalities": ["audio", "text"],
+                                                "instructions": "Say exactly: 'I'm sorry, but your account has insufficient credits. Please add credits at your dashboard to continue using this service. Thank you, goodbye.' Then end the conversation."
+                                            }
+                                        }))
+                                        
+                                        # Wait a moment for message to play, then close
+                                        await asyncio.sleep(8)
+                                        logger.info("🚫 Call blocked due to insufficient credits")
+                                        break  # End call
                                     else:
-                                        logger.info(f"💳 User has ${credits['balance']:.2f} in credits")
+                                        logger.info(f"💳 User has ${credits['balance']:.2f} in credits - call proceeding")
                                     
                                     # Get call info from Twilio data
                                     call_from = data["start"].get("callSid", "unknown")

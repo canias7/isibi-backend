@@ -1,10 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from auth_routes import verify_token  # your JWT verify function
 from db import create_agent, list_agents, get_agent, update_agent, delete_agent, get_user_usage, get_call_history, get_user_credits, add_credits, get_credit_transactions
 from google_calendar import get_google_oauth_url, handle_google_callback, disconnect_google_calendar
 from fastapi.responses import RedirectResponse, HTMLResponse
+import os
+import stripe
+
+# Stripe configuration
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 
 router = APIRouter(prefix="/api", tags=["portal"])
 
@@ -321,3 +327,90 @@ def get_transactions(user=Depends(verify_token), limit: int = 50):
     user_id = user["id"]
     transactions = get_credit_transactions(user_id, limit=limit)
     return {"transactions": transactions}
+
+
+@router.get("/credits/status")
+def get_credits_status(user=Depends(verify_token)):
+    """Get credit balance with low balance warning"""
+    user_id = user["id"]
+    credits = get_user_credits(user_id)
+    
+    # Determine status
+    balance = credits["balance"]
+    status = "good"
+    warning = None
+    
+    if balance <= 0:
+        status = "out"
+        warning = "Your credits have run out. Add credits immediately to keep your agents working."
+    elif balance < 5:
+        status = "low"
+        warning = "Low balance! You have less than $5 remaining. Add credits soon."
+    elif balance < 10:
+        status = "medium"
+        warning = "Your balance is getting low. Consider adding more credits."
+    
+    return {
+        "balance": balance,
+        "total_purchased": credits["total_purchased"],
+        "total_used": credits["total_used"],
+        "status": status,
+        "warning": warning
+    }
+
+
+@router.post("/credits/create-payment-intent")
+def create_payment_intent(payload: PurchaseCreditsRequest, user=Depends(verify_token)):
+    """Create Stripe payment intent for credit purchase"""
+    user_id = user["id"]
+    amount_cents = int(payload.amount * 100)  # Convert to cents
+    
+    try:
+        # Create Stripe payment intent
+        intent = stripe.PaymentIntent.create(
+            amount=amount_cents,
+            currency="usd",
+            metadata={
+                "user_id": user_id,
+                "credit_amount": payload.amount
+            },
+            description=f"Purchase ${payload.amount} in credits"
+        )
+        
+        return {
+            "client_secret": intent.client_secret,
+            "amount": payload.amount
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Payment failed: {str(e)}")
+
+
+@router.post("/credits/webhook")
+async def stripe_webhook(request: Request):
+    """Handle Stripe webhook events"""
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+    
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, STRIPE_WEBHOOK_SECRET
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Webhook error: {str(e)}")
+    
+    # Handle successful payment
+    if event["type"] == "payment_intent.succeeded":
+        payment_intent = event["data"]["object"]
+        user_id = int(payment_intent["metadata"]["user_id"])
+        credit_amount = float(payment_intent["metadata"]["credit_amount"])
+        
+        # Add credits to user's account
+        add_credits(
+            user_id,
+            credit_amount,
+            f"Credit purchase via Stripe - ${credit_amount} (Transaction: {payment_intent['id']})"
+        )
+        
+        print(f"✅ Added ${credit_amount} credits to user {user_id}")
+    
+    return {"ok": True}
