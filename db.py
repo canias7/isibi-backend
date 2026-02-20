@@ -370,7 +370,7 @@ def create_agent(
     tools_json = json.dumps(tools or {})
 
     cur.execute(
-        """
+        f"""
         INSERT INTO agents (
             owner_user_id,
             name,
@@ -407,7 +407,7 @@ def list_agents(owner_user_id: int):
     cur = conn.cursor()
 
     cur.execute(
-        """
+        f"""
         SELECT
             id,
             name,
@@ -459,7 +459,7 @@ def get_agent(owner_user_id: int, agent_id: int):
     cur = conn.cursor()
 
     cur.execute(
-        """
+        f"""
         SELECT
             id, owner_user_id, name, business_name, phone_number,
             system_prompt, voice, provider, first_message, tools_json,
@@ -555,7 +555,7 @@ def start_call_tracking(user_id: int, agent_id: int, call_sid: str, call_from: s
     conn = get_conn()
     cur = conn.cursor()
     
-    cur.execute("""
+    cur.execute(f"""
         INSERT INTO call_usage (user_id, agent_id, call_sid, call_from, call_to, status)
         VALUES ({PH}, {PH}, {PH}, {PH}, {PH}, 'active')
     """, (user_id, agent_id, call_sid, call_from, call_to))
@@ -574,7 +574,7 @@ def end_call_tracking(call_sid: str, duration_seconds: int, cost_usd: float, rev
     
     profit_usd = revenue_usd - cost_usd
     
-    cur.execute("""
+    cur.execute(f"""
         UPDATE call_usage 
         SET duration_seconds = {PH},
             cost_usd = {PH},
@@ -595,7 +595,7 @@ def end_call_tracking(call_sid: str, duration_seconds: int, cost_usd: float, rev
         minutes = duration_seconds / 60.0
         
         # Update monthly summary
-        cur.execute("""
+        cur.execute(f"""
             INSERT INTO monthly_usage (user_id, month, total_calls, total_minutes, total_cost_usd, total_revenue_usd, total_profit_usd)
             VALUES ({PH}, {PH}, 1, {PH}, {PH}, {PH}, {PH})
             ON CONFLICT(user_id, month) DO UPDATE SET
@@ -619,7 +619,7 @@ def get_user_usage(user_id: int, month: str = None):
         month = datetime.now().strftime("%Y-%m")
     
     # Get monthly summary
-    cur.execute("""
+    cur.execute(f"""
         SELECT total_calls, total_minutes, total_cost_usd, total_revenue_usd, total_profit_usd
         FROM monthly_usage
         WHERE user_id = {PH} AND month = {PH}
@@ -655,7 +655,7 @@ def get_call_history(user_id: int, limit: int = 50):
     conn = get_conn()
     cur = conn.cursor()
     
-    cur.execute("""
+    cur.execute(f"""
         SELECT c.*, a.name as agent_name
         FROM call_usage c
         LEFT JOIN agents a ON c.agent_id = a.id
@@ -694,7 +694,7 @@ def get_user_credits(user_id: int):
     conn = get_conn()
     cur = conn.cursor()
     
-    cur.execute("""
+    cur.execute(f"""
         SELECT balance, total_purchased, total_used
         FROM user_credits
         WHERE user_id = {PH}
@@ -713,7 +713,7 @@ def get_user_credits(user_id: int):
     
     # User doesn't have credits record yet - create one
     try:
-        cur.execute("""
+        cur.execute(f"""
             INSERT INTO user_credits (user_id, balance, total_purchased, total_used)
             VALUES ({PH}, 0.0, 0.0, 0.0)
         """, (user_id,))
@@ -721,7 +721,7 @@ def get_user_credits(user_id: int):
     except sqlite3.IntegrityError:
         # Race condition - record was created by another thread
         # Just fetch it again
-        cur.execute("""
+        cur.execute(f"""
             SELECT balance, total_purchased, total_used
             FROM user_credits
             WHERE user_id = {PH}
@@ -753,7 +753,7 @@ def add_credits(user_id: int, amount: float, description: str = "Credit purchase
     get_user_credits(user_id)
     
     # Update balance
-    cur.execute("""
+    cur.execute(f"""
         UPDATE user_credits
         SET balance = balance + ?,
             total_purchased = total_purchased + ?,
@@ -766,7 +766,7 @@ def add_credits(user_id: int, amount: float, description: str = "Credit purchase
     new_balance = cur.fetchone()[0]
     
     # Record transaction
-    cur.execute("""
+    cur.execute(f"""
         INSERT INTO credit_transactions (user_id, amount, type, description, balance_after)
         VALUES ({PH}, {PH}, 'purchase', {PH}, {PH})
     """, (user_id, amount, description, new_balance))
@@ -799,7 +799,7 @@ def deduct_credits(user_id: int, amount: float, call_id: int = None, description
     # Deduct credits
     new_balance = current_balance - amount
     
-    cur.execute("""
+    cur.execute(f"""
         UPDATE user_credits
         SET balance = {PH},
             total_used = total_used + ?,
@@ -808,7 +808,7 @@ def deduct_credits(user_id: int, amount: float, call_id: int = None, description
     """, (new_balance, amount, user_id))
     
     # Record transaction
-    cur.execute("""
+    cur.execute(f"""
         INSERT INTO credit_transactions (user_id, amount, type, description, balance_after, call_id)
         VALUES ({PH}, {PH}, 'usage', {PH}, {PH}, {PH})
     """, (user_id, -amount, description, new_balance, call_id))
@@ -824,7 +824,7 @@ def get_credit_transactions(user_id: int, limit: int = 50):
     conn = get_conn()
     cur = conn.cursor()
     
-    cur.execute("""
+    cur.execute(f"""
         SELECT *
         FROM credit_transactions
         WHERE user_id = {PH}
@@ -851,7 +851,7 @@ def get_user_google_credentials(user_id: int):
     conn = get_conn()
     cur = conn.cursor()
     
-    cur.execute("""
+    cur.execute(f"""
         SELECT google_calendar_credentials, google_calendar_id
         FROM user_google_credentials
         WHERE user_id = {PH}
@@ -873,7 +873,7 @@ def save_user_google_credentials(user_id: int, credentials_json: str, calendar_i
     conn = get_conn()
     cur = conn.cursor()
     
-    cur.execute("""
+    cur.execute(f"""
         INSERT INTO user_google_credentials (user_id, google_calendar_credentials, google_calendar_id)
         VALUES ({PH}, {PH}, {PH})
         ON CONFLICT(user_id) DO UPDATE SET
@@ -898,7 +898,7 @@ def assign_google_calendar_to_agent(user_id: int, agent_id: int):
     conn = get_conn()
     cur = conn.cursor()
     
-    cur.execute("""
+    cur.execute(f"""
         UPDATE agents
         SET google_calendar_credentials = {PH},
             google_calendar_id = {PH}
