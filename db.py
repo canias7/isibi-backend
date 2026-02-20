@@ -250,7 +250,7 @@ def init_db():
     conn.close()
 
 def get_tenant_by_number(phone):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cur = conn.cursor()
 
     cur.execute(
@@ -264,7 +264,7 @@ def get_tenant_by_number(phone):
 
 
 def get_agent_prompt(tenant_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cur = conn.cursor()
 
     cur.execute(
@@ -278,7 +278,7 @@ def get_agent_prompt(tenant_id):
 
 
 def set_agent_prompt(tenant_id, prompt):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cur = conn.cursor()
 
     cur.execute(
@@ -291,7 +291,7 @@ def set_agent_prompt(tenant_id, prompt):
 
  
 def create_tenant_if_missing(phone_number: str):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cur = conn.cursor()
 
     cur.execute(
@@ -309,7 +309,7 @@ import bcrypt
 def create_user(email: str, password: str, tenant_phone: str | None = None):
     password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO users (email, password_hash, tenant_phone) VALUES (?, ?, ?)",
@@ -319,7 +319,7 @@ def create_user(email: str, password: str, tenant_phone: str | None = None):
     conn.close()
 
 def get_user_by_email(email: str):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cur = conn.cursor()
     cur.execute(
         "SELECT id, email, password_hash, tenant_phone FROM users WHERE email = ?",
@@ -354,7 +354,7 @@ def create_agent(
     first_message: str = None,
     tools: dict = None,   # example: {"google_calendar": True, "slack": False}
 ):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cur = conn.cursor()
 
     tools_json = json.dumps(tools or {})
@@ -393,7 +393,7 @@ def create_agent(
     return agent_id
 
 def list_agents(owner_user_id: int):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cur = conn.cursor()
 
     cur.execute(
@@ -504,7 +504,7 @@ def update_agent(owner_user_id: int, agent_id: int, **fields):
     params = list(updates.values())
     params += [agent_id, owner_user_id]
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cur = conn.cursor()
 
     cur.execute(
@@ -524,7 +524,7 @@ def update_agent(owner_user_id: int, agent_id: int, **fields):
 
 def delete_agent(owner_user_id: int, agent_id: int):
     """Delete an agent. Only the owner can delete their own agents."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn()
     cur = conn.cursor()
     
     cur.execute(
@@ -643,7 +643,6 @@ def get_user_usage(user_id: int, month: str = None):
 def get_call_history(user_id: int, limit: int = 50):
     """Get recent call history for a user"""
     conn = get_conn()
-    conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     
     cur.execute("""
@@ -813,7 +812,6 @@ def deduct_credits(user_id: int, amount: float, call_id: int = None, description
 def get_credit_transactions(user_id: int, limit: int = 50):
     """Get credit transaction history"""
     conn = get_conn()
-    conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     
     cur.execute("""
