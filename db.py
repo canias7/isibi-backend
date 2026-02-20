@@ -1,14 +1,42 @@
-import sqlite3
-import json
 import os
+import json
+from datetime import datetime
 
-DB_PATH = os.getenv("DB_PATH", "app.db")
-def get_conn():
-    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA busy_timeout=30000;")
-    return conn
+# Check which database to use
+DATABASE_URL = os.getenv("DATABASE_URL")
+USE_POSTGRES = DATABASE_URL and DATABASE_URL.startswith("postgres")
+
+if USE_POSTGRES:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    import sqlite3  # Still import for the exception types
+    
+    def get_conn():
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        return conn
+    
+    # SQL placeholder for PostgreSQL
+    def sql_placeholder():
+        return "%s"
+    
+    print("✅ Using PostgreSQL database")
+else:
+    import sqlite3
+    
+    DB_PATH = os.getenv("DB_PATH", "app.db")
+    
+    def get_conn():
+        conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=30000;")
+        return conn
+    
+    # SQL placeholder for SQLite
+    def sql_placeholder():
+        return "?"
+    
+    print("⚠️ Using SQLite database (local dev)")
 
 def add_column_if_missing(conn, table, column, coltype):
     cur = conn.cursor()
@@ -21,26 +49,40 @@ def add_column_if_missing(conn, table, column, coltype):
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
+    
+    # Determine SQL syntax based on database type
+    if USE_POSTGRES:
+        # PostgreSQL syntax
+        ID = "SERIAL PRIMARY KEY"
+        REAL = "NUMERIC(10,4)"
+        TIMESTAMP = "TIMESTAMP"
+    else:
+        # SQLite syntax
+        ID = "INTEGER PRIMARY KEY AUTOINCREMENT"
+        REAL = "REAL"
+        TIMESTAMP = "TEXT"
 
-    cur.execute("""
+    cur.execute(f"""
     CREATE TABLE IF NOT EXISTS tenants (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {ID},
         phone_number TEXT UNIQUE,
         agent_prompt TEXT
     )
     """)
-    cur.execute("""
+    
+    cur.execute(f"""
     CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {ID},
         email TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         tenant_phone TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at {TIMESTAMP} DEFAULT CURRENT_TIMESTAMP
     )
     """)
-    cur.execute("""
+    
+    cur.execute(f"""
     CREATE TABLE IF NOT EXISTS agents (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {ID},
         owner_user_id INTEGER NOT NULL,
         name TEXT NOT NULL,
         business_name TEXT,
@@ -53,27 +95,27 @@ def init_db():
         tools_json TEXT,
         google_calendar_credentials TEXT,
         google_calendar_id TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        created_at {TIMESTAMP} DEFAULT CURRENT_TIMESTAMP,
+        updated_at {TIMESTAMP} DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(owner_user_id) REFERENCES users(id)
     )
     """)
     
     # Usage tracking table
-    cur.execute("""
+    cur.execute(f"""
     CREATE TABLE IF NOT EXISTS call_usage (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {ID},
         user_id INTEGER NOT NULL,
         agent_id INTEGER NOT NULL,
         call_sid TEXT,
         call_from TEXT,
         call_to TEXT,
         duration_seconds INTEGER DEFAULT 0,
-        cost_usd REAL DEFAULT 0.0,
-        revenue_usd REAL DEFAULT 0.0,
-        profit_usd REAL DEFAULT 0.0,
-        started_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        ended_at TEXT,
+        cost_usd {REAL} DEFAULT 0.0,
+        revenue_usd {REAL} DEFAULT 0.0,
+        profit_usd {REAL} DEFAULT 0.0,
+        started_at {TIMESTAMP} DEFAULT CURRENT_TIMESTAMP,
+        ended_at {TIMESTAMP},
         status TEXT DEFAULT 'active',
         FOREIGN KEY(user_id) REFERENCES users(id),
         FOREIGN KEY(agent_id) REFERENCES agents(id)
@@ -81,72 +123,72 @@ def init_db():
     """)
     
     # Monthly usage summary table
-    cur.execute("""
+    cur.execute(f"""
     CREATE TABLE IF NOT EXISTS monthly_usage (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {ID},
         user_id INTEGER NOT NULL,
         month TEXT NOT NULL,
         total_calls INTEGER DEFAULT 0,
-        total_minutes REAL DEFAULT 0.0,
-        total_cost_usd REAL DEFAULT 0.0,
-        total_revenue_usd REAL DEFAULT 0.0,
-        total_profit_usd REAL DEFAULT 0.0,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        total_minutes {REAL} DEFAULT 0.0,
+        total_cost_usd {REAL} DEFAULT 0.0,
+        total_revenue_usd {REAL} DEFAULT 0.0,
+        total_profit_usd {REAL} DEFAULT 0.0,
+        created_at {TIMESTAMP} DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(user_id) REFERENCES users(id),
         UNIQUE(user_id, month)
     )
     """)
     
     # Credits balance table
-    cur.execute("""
+    cur.execute(f"""
     CREATE TABLE IF NOT EXISTS user_credits (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {ID},
         user_id INTEGER NOT NULL UNIQUE,
-        balance REAL DEFAULT 0.0,
-        total_purchased REAL DEFAULT 0.0,
-        total_used REAL DEFAULT 0.0,
-        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        balance {REAL} DEFAULT 0.0,
+        total_purchased {REAL} DEFAULT 0.0,
+        total_used {REAL} DEFAULT 0.0,
+        updated_at {TIMESTAMP} DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(user_id) REFERENCES users(id)
     )
     """)
     
-    # Credit transactions table (purchases and usage)
-    cur.execute("""
+    # Credit transactions table
+    cur.execute(f"""
     CREATE TABLE IF NOT EXISTS credit_transactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {ID},
         user_id INTEGER NOT NULL,
-        amount REAL NOT NULL,
+        amount {REAL} NOT NULL,
         type TEXT NOT NULL,
         description TEXT,
-        balance_after REAL NOT NULL,
+        balance_after {REAL} NOT NULL,
         call_id INTEGER,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        created_at {TIMESTAMP} DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(user_id) REFERENCES users(id),
         FOREIGN KEY(call_id) REFERENCES call_usage(id)
     )
     """)
     
-    # User-level Google credentials (used during agent creation)
-    cur.execute("""
+    # User-level Google credentials
+    cur.execute(f"""
     CREATE TABLE IF NOT EXISTS user_google_credentials (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {ID},
         user_id INTEGER NOT NULL UNIQUE,
         google_calendar_credentials TEXT,
         google_calendar_id TEXT DEFAULT 'primary',
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        created_at {TIMESTAMP} DEFAULT CURRENT_TIMESTAMP,
+        updated_at {TIMESTAMP} DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(user_id) REFERENCES users(id)
     )
     """)
     
     # Pricing plans table
-    cur.execute("""
+    cur.execute(f"""
     CREATE TABLE IF NOT EXISTS pricing_plans (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {ID},
         name TEXT NOT NULL,
-        price_per_minute REAL NOT NULL,
+        price_per_minute {REAL} NOT NULL,
         included_minutes INTEGER DEFAULT 0,
-        monthly_fee REAL DEFAULT 0.0,
+        monthly_fee {REAL} DEFAULT 0.0,
         active INTEGER DEFAULT 1
     )
     """)
