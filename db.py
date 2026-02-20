@@ -444,8 +444,8 @@ def list_agents(owner_user_id: int):
                 "voice": r.get('voice'),
                 "provider": r.get('provider'),
                 "first_message": r.get('first_message'),
-                "created_at": r.get('created_at'),
-                "updated_at": r.get('updated_at'),
+                "created_at": str(r.get('created_at')) if r.get('created_at') else None,
+                "updated_at": str(r.get('updated_at')) if r.get('updated_at') else None,
             }
         else:
             # SQLite tuple format
