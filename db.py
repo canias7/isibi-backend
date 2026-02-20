@@ -7,19 +7,37 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 USE_POSTGRES = DATABASE_URL and DATABASE_URL.startswith("postgres")
 
 if USE_POSTGRES:
-    import psycopg2
-    from psycopg2.extras import RealDictCursor
-    import sqlite3  # Still import for the exception types
-    
-    def get_conn():
-        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-        return conn
-    
-    # SQL placeholder for PostgreSQL
-    def sql_placeholder():
-        return "%s"
-    
-    print("✅ Using PostgreSQL database")
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        import sqlite3  # Still import for the exception types
+        
+        def get_conn():
+            conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+            return conn
+        
+        # SQL placeholder for PostgreSQL
+        def sql_placeholder():
+            return "%s"
+        
+        print("✅ Using PostgreSQL database")
+    except ImportError as e:
+        print(f"⚠️ PostgreSQL import failed: {e}")
+        print("⚠️ Falling back to SQLite")
+        USE_POSTGRES = False
+        import sqlite3
+        
+        DB_PATH = os.getenv("DB_PATH", "app.db")
+        
+        def get_conn():
+            conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA busy_timeout=30000;")
+            return conn
+        
+        def sql_placeholder():
+            return "?"
 else:
     import sqlite3
     
