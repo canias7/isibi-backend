@@ -432,25 +432,44 @@ def list_agents(owner_user_id: int):
 
     agents = []
     for r in rows:
-        tools_raw = r[8] or "{}"
+        # Handle both SQLite (tuple/list) and PostgreSQL (dict) formats
+        if isinstance(r, dict):
+            tools_raw = r.get('tools_json') or "{}"
+            agent_dict = {
+                "id": r['id'],
+                "name": r['name'],
+                "business_name": r.get('business_name'),
+                "phone_number": r.get('phone_number'),
+                "system_prompt": r.get('system_prompt'),
+                "voice": r.get('voice'),
+                "provider": r.get('provider'),
+                "first_message": r.get('first_message'),
+                "created_at": r.get('created_at'),
+                "updated_at": r.get('updated_at'),
+            }
+        else:
+            # SQLite tuple format
+            tools_raw = r[8] or "{}"
+            agent_dict = {
+                "id": r[0],
+                "name": r[1],
+                "business_name": r[2],
+                "phone_number": r[3],
+                "system_prompt": r[4],
+                "voice": r[5],
+                "provider": r[6],
+                "first_message": r[7],
+                "created_at": r[9],
+                "updated_at": r[10],
+            }
+        
         try:
             tools = json.loads(tools_raw)
         except Exception:
             tools = {}
 
-        agents.append({
-            "id": r[0],
-            "name": r[1],
-            "business_name": r[2],
-            "phone_number": r[3],
-            "system_prompt": r[4],
-            "voice": r[5],
-            "provider": r[6],
-            "first_message": r[7],
-            "tools": tools,          # returned as dict
-            "created_at": r[9],
-            "updated_at": r[10],
-        })
+        agent_dict["tools"] = tools
+        agents.append(agent_dict)
 
     return agents
 
