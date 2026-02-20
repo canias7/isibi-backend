@@ -195,16 +195,23 @@ def check_availability(agent_id: int, date: str, time: str, duration_minutes: in
         start_dt = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
         end_dt = start_dt + timedelta(minutes=duration_minutes)
         
-        # Check for conflicts
+        # Check for conflicts - use RFC3339 format with timezone
         events_result = service.events().list(
             calendarId='primary',
-            timeMin=start_dt.isoformat() + 'Z',
-            timeMax=end_dt.isoformat() + 'Z',
+            timeMin=start_dt.isoformat(),
+            timeMax=end_dt.isoformat(),
             singleEvents=True,
-            orderBy='startTime'
+            orderBy='startTime',
+            timeZone='America/New_York'  # Important: specify timezone
         ).execute()
         
         events = events_result.get('items', [])
+        
+        print(f"🔍 Checking availability for {date} {time}")
+        print(f"   Found {len(events)} conflicting events")
+        if events:
+            for event in events:
+                print(f"   - {event.get('summary', 'No title')}: {event.get('start')}")
         
         if events:
             return {
