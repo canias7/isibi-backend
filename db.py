@@ -150,7 +150,7 @@ def init_db():
     """)
     
     # Add deleted_at column if it doesn't exist (migration)
-    add_column_if_missing('agents', 'deleted_at', f'{TIMESTAMP}')
+    add_column_if_missing(conn, 'agents', 'deleted_at', f'{TIMESTAMP}')
     
     # Usage tracking table
     cur.execute(f"""
