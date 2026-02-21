@@ -555,22 +555,21 @@ def update_agent(owner_user_id: int, agent_id: int, **fields):
     if not updates:
         return False  # nothing to update
 
-    set_clause = ", ".join([f"{k} = {PH}" for k in updates.keys()])
+    set_clause = ", ".join([f"{k} = {{PH}}" for k in updates.keys()])
     params = list(updates.values())
     params += [agent_id, owner_user_id]
 
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute(
-        sql("""
+    query = f"""
         UPDATE agents
         SET {set_clause},
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = {PH} AND owner_user_id = {PH}
-        """),
-        params
-    )
+        WHERE id = {{PH}} AND owner_user_id = {{PH}}
+    """
+    
+    cur.execute(sql(query), params)
 
     conn.commit()
     changed = cur.rowcount > 0
