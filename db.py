@@ -692,7 +692,7 @@ def get_call_history(user_id: int, limit: int = 50):
         LEFT JOIN agents a ON c.agent_id = a.id
         WHERE c.user_id = {PH}
         ORDER BY c.started_at DESC
-        LIMIT ?
+        LIMIT {PH}
     """), (user_id, limit))
     
     calls = [dict(row) for row in cur.fetchall()]
@@ -881,7 +881,7 @@ def get_credit_transactions(user_id: int, limit: int = 50):
         FROM credit_transactions
         WHERE user_id = {PH}
         ORDER BY created_at DESC
-        LIMIT ?
+        LIMIT {PH}
     """), (user_id, limit))
     
     transactions = [dict(row) for row in cur.fetchall()]
