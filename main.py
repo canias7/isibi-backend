@@ -388,6 +388,10 @@ async def handle_media_stream(websocket: WebSocket):
                                         tools=agent_tools
                                     )
                                     logger.info("🔄 OpenAI session updated with agent config")
+                                    
+                                    # Wait a bit for session to be fully configured
+                                    await asyncio.sleep(0.5)
+                                    
                             except Exception as e:
                                 logger.error(f"❌ Error loading agent: {e}")
 
@@ -399,14 +403,27 @@ async def handle_media_stream(websocket: WebSocket):
                         # Send first message if configured
                         if first_message and not first_message_sent:
                             logger.info(f"📢 Sending first message: {first_message}")
-                            # Use response.create with input directly to force exact message
+                            
+                            # Add the message as a conversation item first
                             await openai_ws.send(json.dumps({
-                                "type": "response.create",
-                                "response": {
-                                    "modalities": ["audio", "text"],
-                                    "instructions": f"Say exactly this and nothing else: '{first_message}'"
+                                "type": "conversation.item.create",
+                                "item": {
+                                    "type": "message",
+                                    "role": "assistant",
+                                    "content": [
+                                        {
+                                            "type": "input_text",
+                                            "text": first_message
+                                        }
+                                    ]
                                 }
                             }))
+                            
+                            # Then trigger the response to speak it
+                            await openai_ws.send(json.dumps({
+                                "type": "response.create"
+                            }))
+                            
                             first_message_sent = True
                             logger.info("📢 First message sent successfully")
 
