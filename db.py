@@ -402,6 +402,7 @@ def create_agent(
     provider: str = None,
     first_message: str = None,
     tools: dict = None,   # example: {"google_calendar": True, "slack": False}
+    twilio_number_sid: str = None,
 ):
     conn = get_conn()
     cur = conn.cursor()
@@ -419,9 +420,10 @@ def create_agent(
             voice,
             provider,
             first_message,
-            tools_json
+            tools_json,
+            twilio_number_sid
         )
-        VALUES ({PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH})
+        VALUES ({PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH})
         """ + (" RETURNING id" if USE_POSTGRES else "")),
         (
             owner_user_id,
@@ -433,6 +435,7 @@ def create_agent(
             provider,
             first_message,
             tools_json,
+            twilio_number_sid,
         )
     )
 

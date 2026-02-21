@@ -34,6 +34,7 @@ class ToolsModel(BaseModel):
 class CreateAgentRequest(BaseModel):
     # phone number section
     phone_number: Optional[str] = None
+    twilio_number_sid: Optional[str] = None  # The Twilio SID of the pre-purchased number
 
     # assistant section
     business_name: Optional[str] = None
@@ -127,7 +128,17 @@ def api_create_agent(payload: CreateAgentRequest, user=Depends(verify_token)):
         provider=payload.provider,
         voice=payload.voice,
         tools=(payload.tools.model_dump() if payload.tools else {}),
+        twilio_number_sid=payload.twilio_number_sid,
     )
+    
+    # If a Twilio number was provided, update its friendly name
+    if payload.twilio_number_sid and twilio_client:
+        try:
+            twilio_client.incoming_phone_numbers(payload.twilio_number_sid).update(
+                friendly_name=f"{payload.assistant_name} - {payload.business_name or 'Agent'}"
+            )
+        except Exception as e:
+            print(f"⚠️ Failed to update Twilio number friendly name: {e}")
     
     # If user wants calendar enabled, assign their credentials to this agent
     if payload.enable_calendar:
@@ -508,19 +519,13 @@ async def stripe_webhook(request: Request):
 
 # ========== Phone Number Management ==========
 
-@router.post("/agents/{agent_id}/phone/search")
-def search_available_numbers(agent_id: int, payload: PurchaseNumberRequest, user=Depends(verify_token)):
+@router.post("/phone/search")
+def search_available_numbers(payload: PurchaseNumberRequest, user=Depends(verify_token)):
     """
-    Search for available Twilio numbers
+    Search for available Twilio numbers (BEFORE creating agent)
     """
     if not twilio_client:
         raise HTTPException(status_code=503, detail="Twilio not configured")
-    
-    user_id = user["id"]
-    agent = get_agent(user_id, agent_id)
-    
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
     
     try:
         # Search for available numbers
@@ -556,22 +561,16 @@ def search_available_numbers(agent_id: int, payload: PurchaseNumberRequest, user
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
-@router.post("/agents/{agent_id}/phone/purchase")
-def purchase_phone_number(agent_id: int, payload: PurchaseNumberRequest, user=Depends(verify_token)):
+@router.post("/phone/purchase")
+def purchase_phone_number(payload: PurchaseNumberRequest, user=Depends(verify_token)):
     """
-    Purchase a Twilio phone number for the agent
+    Purchase a Twilio phone number (BEFORE creating agent)
+    Returns the number so it can be used when creating the agent
     """
     if not twilio_client:
         raise HTTPException(status_code=503, detail="Twilio not configured")
     
     user_id = user["id"]
-    agent = get_agent(user_id, agent_id)
-    
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    
-    if agent.get("phone_number"):
-        raise HTTPException(status_code=400, detail="Agent already has a phone number")
     
     try:
         # Search for available numbers
@@ -592,33 +591,86 @@ def purchase_phone_number(agent_id: int, payload: PurchaseNumberRequest, user=De
         purchased_number = twilio_client.incoming_phone_numbers.create(
             phone_number=available_numbers[0].phone_number,
             voice_url=f"{BACKEND_URL}/incoming-call",
-            voice_method="POST"
-        )
-        
-        # Update agent with the new number
-        update_agent(
-            user_id, 
-            agent_id, 
-            phone_number=purchased_number.phone_number,
-            twilio_number_sid=purchased_number.sid
+            voice_method="POST",
+            friendly_name=f"User {user_id} - Reserved"  # Mark as reserved until agent is created
         )
         
         return {
             "success": True,
             "phone_number": purchased_number.phone_number,
             "twilio_sid": purchased_number.sid,
+            "friendly_name": purchased_number.friendly_name,
             "monthly_cost": 5.00,  # What you charge customer
-            "message": f"Phone number {purchased_number.phone_number} has been assigned to your agent!"
+            "message": f"Phone number {purchased_number.phone_number} is ready! Use it when creating your agent."
         }
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Purchase failed: {str(e)}")
 
 
-@router.delete("/agents/{agent_id}/phone/release")
-def release_phone_number(agent_id: int, user=Depends(verify_token)):
+@router.post("/phone/release/{twilio_sid}")
+def release_phone_number_by_sid(twilio_sid: str, user=Depends(verify_token)):
     """
-    Release the Twilio number (when agent is deleted or user wants to change number)
+    Release a Twilio number that was purchased but not used
+    (In case user changes their mind before creating agent)
+    """
+    if not twilio_client:
+        raise HTTPException(status_code=503, detail="Twilio not configured")
+    
+    try:
+        # Release the Twilio number
+        twilio_client.incoming_phone_numbers(twilio_sid).delete()
+        
+        return {
+            "success": True,
+            "message": "Phone number released successfully"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Release failed: {str(e)}")
+
+
+@router.get("/phone/my-numbers")
+def get_my_purchased_numbers(user=Depends(verify_token)):
+    """
+    Get all phone numbers purchased by this user (from Twilio)
+    Useful to show numbers that are available to assign to agents
+    """
+    if not twilio_client:
+        raise HTTPException(status_code=503, detail="Twilio not configured")
+    
+    user_id = user["id"]
+    
+    try:
+        # Get all numbers
+        all_numbers = twilio_client.incoming_phone_numbers.list()
+        
+        # Filter to user's numbers (those with their user_id in friendly_name)
+        user_numbers = [
+            {
+                "phone_number": num.phone_number,
+                "twilio_sid": num.sid,
+                "friendly_name": num.friendly_name,
+                "monthly_cost": 5.00
+            }
+            for num in all_numbers
+            if f"User {user_id}" in (num.friendly_name or "")
+        ]
+        
+        return {
+            "numbers": user_numbers,
+            "count": len(user_numbers)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch numbers: {str(e)}")
+
+
+@router.delete("/agents/{agent_id}/phone/release")
+def release_agent_phone_number(agent_id: int, user=Depends(verify_token)):
+    """
+    Release the Twilio number from an agent
+    (Keeps the number in Twilio, just removes from agent)
     """
     if not twilio_client:
         raise HTTPException(status_code=503, detail="Twilio not configured")
@@ -630,23 +682,23 @@ def release_phone_number(agent_id: int, user=Depends(verify_token)):
         raise HTTPException(status_code=404, detail="Agent not found")
     
     if not agent.get("twilio_number_sid"):
-        raise HTTPException(status_code=404, detail="No Twilio number to release")
+        raise HTTPException(status_code=404, detail="Agent has no phone number")
     
     try:
-        # Release the Twilio number
-        twilio_client.incoming_phone_numbers(agent["twilio_number_sid"]).delete()
-        
-        # Clear from agent record
+        # Just clear from agent record, keep number in Twilio
         update_agent(user_id, agent_id, phone_number=None, twilio_number_sid=None)
+        
+        # Update friendly name to show it's available again
+        twilio_client.incoming_phone_numbers(agent["twilio_number_sid"]).update(
+            friendly_name=f"User {user_id} - Available"
+        )
         
         return {
             "success": True,
-            "message": "Phone number released successfully"
+            "message": "Phone number removed from agent (still in your account)"
         }
         
     except Exception as e:
-        # If Twilio delete fails, still clear from database
-        update_agent(user_id, agent_id, phone_number=None, twilio_number_sid=None)
         raise HTTPException(status_code=500, detail=f"Release failed: {str(e)}")
 
 
