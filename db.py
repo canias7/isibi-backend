@@ -722,11 +722,19 @@ def get_user_credits(user_id: int):
     row = cur.fetchone()
     
     if row:
-        result = {
-            "balance": round(row[0], 2),
-            "total_purchased": round(row[1], 2),
-            "total_used": round(row[2], 2)
-        }
+        # Handle both SQLite (tuple) and PostgreSQL (dict)
+        if isinstance(row, dict):
+            result = {
+                "balance": round(float(row['balance']), 2),
+                "total_purchased": round(float(row['total_purchased']), 2),
+                "total_used": round(float(row['total_used']), 2)
+            }
+        else:
+            result = {
+                "balance": round(row[0], 2),
+                "total_purchased": round(row[1], 2),
+                "total_used": round(row[2], 2)
+            }
         conn.close()
         return result
     
@@ -747,11 +755,18 @@ def get_user_credits(user_id: int):
         """, (user_id,))
         row = cur.fetchone()
         if row:
-            result = {
-                "balance": round(row[0], 2),
-                "total_purchased": round(row[1], 2),
-                "total_used": round(row[2], 2)
-            }
+            if isinstance(row, dict):
+                result = {
+                    "balance": round(float(row['balance']), 2),
+                    "total_purchased": round(float(row['total_purchased']), 2),
+                    "total_used": round(float(row['total_used']), 2)
+                }
+            else:
+                result = {
+                    "balance": round(row[0], 2),
+                    "total_purchased": round(row[1], 2),
+                    "total_used": round(row[2], 2)
+                }
             conn.close()
             return result
     
