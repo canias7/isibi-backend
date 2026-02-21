@@ -152,6 +152,17 @@ def init_db():
     # Add deleted_at column if it doesn't exist (migration)
     add_column_if_missing(conn, 'agents', 'deleted_at', f'{TIMESTAMP}')
     
+    # Add partial unique index for phone numbers (only for non-deleted agents)
+    if USE_POSTGRES:
+        try:
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS agents_phone_active_unique 
+                ON agents (phone_number) 
+                WHERE deleted_at IS NULL AND phone_number IS NOT NULL
+            """)
+        except:
+            pass  # Index might already exist
+    
     # Usage tracking table
     cur.execute(f"""
     CREATE TABLE IF NOT EXISTS call_usage (
@@ -1050,7 +1061,7 @@ def assign_google_calendar_to_agent(user_id: int, agent_id: int):
 def get_agent_by_id(agent_id: int):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute(sql("SELECT * FROM agents WHERE id = {PH}"), (agent_id,))
+    cur.execute(sql("SELECT * FROM agents WHERE id = {PH} AND deleted_at IS NULL"), (agent_id,))
     row = cur.fetchone()
     conn.close()
     return dict(row) if row else None
@@ -1058,7 +1069,7 @@ def get_agent_by_id(agent_id: int):
 def get_agent_by_phone(phone_number: str):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute(sql("SELECT * FROM agents WHERE phone_number = {PH} LIMIT 1"), (phone_number,))
+    cur.execute(sql("SELECT * FROM agents WHERE phone_number = {PH} AND deleted_at IS NULL LIMIT 1"), (phone_number,))
     row = cur.fetchone()
     conn.close()
     return dict(row) if row else None
