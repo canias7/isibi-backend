@@ -664,16 +664,30 @@ def end_call_tracking(call_sid: str, duration_seconds: int, cost_usd: float, rev
         minutes = duration_seconds / 60.0
         
         # Update monthly summary
-        cur.execute(sql("""
-            INSERT INTO monthly_usage (user_id, month, total_calls, total_minutes, total_cost_usd, total_revenue_usd, total_profit_usd)
-            VALUES ({PH}, {PH}, 1, {PH}, {PH}, {PH}, {PH})
-            ON CONFLICT(user_id, month) DO UPDATE SET
-                total_calls = total_calls + 1,
-                total_minutes = total_minutes + {PH},
-                total_cost_usd = total_cost_usd + {PH},
-                total_revenue_usd = total_revenue_usd + {PH},
-                total_profit_usd = total_profit_usd + {PH}
-        """), (user_id, month, minutes, cost_usd, revenue_usd, profit_usd, minutes, cost_usd, revenue_usd, profit_usd))
+        if USE_POSTGRES:
+            # PostgreSQL - use EXCLUDED prefix to avoid ambiguity
+            cur.execute(sql("""
+                INSERT INTO monthly_usage (user_id, month, total_calls, total_minutes, total_cost_usd, total_revenue_usd, total_profit_usd)
+                VALUES ({PH}, {PH}, 1, {PH}, {PH}, {PH}, {PH})
+                ON CONFLICT(user_id, month) DO UPDATE SET
+                    total_calls = monthly_usage.total_calls + 1,
+                    total_minutes = monthly_usage.total_minutes + {PH},
+                    total_cost_usd = monthly_usage.total_cost_usd + {PH},
+                    total_revenue_usd = monthly_usage.total_revenue_usd + {PH},
+                    total_profit_usd = monthly_usage.total_profit_usd + {PH}
+            """), (user_id, month, minutes, cost_usd, revenue_usd, profit_usd, minutes, cost_usd, revenue_usd, profit_usd))
+        else:
+            # SQLite - use INSERT OR REPLACE
+            cur.execute(sql("""
+                INSERT INTO monthly_usage (user_id, month, total_calls, total_minutes, total_cost_usd, total_revenue_usd, total_profit_usd)
+                VALUES ({PH}, {PH}, 1, {PH}, {PH}, {PH}, {PH})
+                ON CONFLICT(user_id, month) DO UPDATE SET
+                    total_calls = total_calls + 1,
+                    total_minutes = total_minutes + {PH},
+                    total_cost_usd = total_cost_usd + {PH},
+                    total_revenue_usd = total_revenue_usd + {PH},
+                    total_profit_usd = total_profit_usd + {PH}
+            """), (user_id, month, minutes, cost_usd, revenue_usd, profit_usd, minutes, cost_usd, revenue_usd, profit_usd))
     
     conn.commit()
     conn.close()
