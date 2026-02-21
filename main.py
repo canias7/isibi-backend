@@ -440,6 +440,11 @@ async def handle_media_stream(websocket: WebSocket):
                                 call_end_time = datetime.now()
                                 duration_seconds = int((call_end_time - call_start_time).total_seconds())
                                 
+                                # Skip tracking if call was too short (< 1 second)
+                                if duration_seconds < 1:
+                                    logger.warning(f"⚠️ Call too short to track: {duration_seconds}s")
+                                    break
+                                
                                 # YOUR COST: What you pay (e.g., $0.05/min)
                                 cost = calculate_call_cost(duration_seconds, cost_per_minute=0.05)
                                 
@@ -449,8 +454,12 @@ async def handle_media_stream(websocket: WebSocket):
                                 # PROFIT: What you make
                                 profit = credits_to_deduct - cost
                                 
+                                logger.info(f"📊 Call ended: {duration_seconds}s")
+                                logger.info(f"💰 Cost: ${cost:.4f} | Credits to deduct: ${credits_to_deduct:.4f}")
+                                
                                 # Save call record
                                 end_call_tracking(stream_sid, duration_seconds, cost, credits_to_deduct)
+                                logger.info(f"✅ Call tracking saved")
                                 
                                 # Deduct credits from user's balance
                                 owner_user_id = agent.get('owner_user_id')
@@ -461,14 +470,14 @@ async def handle_media_stream(websocket: WebSocket):
                                 )
                                 
                                 if result["success"]:
-                                    logger.info(f"📊 Call ended: {duration_seconds}s")
-                                    logger.info(f"💰 Cost: ${cost:.4f} | Credits deducted: ${credits_to_deduct:.4f}")
                                     logger.info(f"💳 Remaining balance: ${result['balance']:.2f}")
                                 else:
                                     logger.warning(f"⚠️ Credit deduction failed: {result.get('error')}")
                                     
                             except Exception as e:
                                 logger.error(f"❌ Failed to end call tracking: {e}")
+                                import traceback
+                                logger.error(traceback.format_exc())
                         
                         break
 
@@ -597,17 +606,23 @@ def get_calendar_tools(agent_id: int) -> list:
     Returns empty list if calendar not connected.
     """
     # Check if agent has calendar connected
-    from db import get_conn
+    from db import get_conn, sql
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        "SELECT google_calendar_credentials FROM agents WHERE id = ?",
+        sql("SELECT google_calendar_credentials FROM agents WHERE id = {PH}"),
         (agent_id,)
     )
     row = cur.fetchone()
     conn.close()
     
-    if not row or not row[0]:
+    if not row:
+        return []
+    
+    # Handle both dict (PostgreSQL) and tuple (SQLite)
+    creds = row.get('google_calendar_credentials') if isinstance(row, dict) else row[0]
+    
+    if not creds:
         return []
     
     # Calendar is connected - return tool definitions
