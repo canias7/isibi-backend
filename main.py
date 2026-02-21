@@ -404,24 +404,13 @@ async def handle_media_stream(websocket: WebSocket):
                         if first_message and not first_message_sent:
                             logger.info(f"📢 Sending first message: {first_message}")
                             
-                            # Add the message as a conversation item first
+                            # Send response.create with the message directly
                             await openai_ws.send(json.dumps({
-                                "type": "conversation.item.create",
-                                "item": {
-                                    "type": "message",
-                                    "role": "assistant",
-                                    "content": [
-                                        {
-                                            "type": "text",  # Changed from 'input_text' to 'text'
-                                            "text": first_message
-                                        }
-                                    ]
+                                "type": "response.create",
+                                "response": {
+                                    "modalities": ["text", "audio"],
+                                    "instructions": f"Say this exact message: {first_message}"
                                 }
-                            }))
-                            
-                            # Then trigger the response to speak it
-                            await openai_ws.send(json.dumps({
-                                "type": "response.create"
                             }))
                             
                             first_message_sent = True

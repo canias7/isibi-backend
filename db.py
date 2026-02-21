@@ -407,7 +407,7 @@ def create_agent(
             tools_json
         )
         VALUES ({PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH})
-        """),
+        """ + (" RETURNING id" if USE_POSTGRES else "")),
         (
             owner_user_id,
             name,
@@ -421,8 +421,13 @@ def create_agent(
         )
     )
 
+    if USE_POSTGRES:
+        row = cur.fetchone()
+        agent_id = row['id'] if isinstance(row, dict) else row[0]
+    else:
+        agent_id = cur.lastrowid
+    
     conn.commit()
-    agent_id = cur.lastrowid
     conn.close()
     return agent_id
 
@@ -607,13 +612,24 @@ def start_call_tracking(user_id: int, agent_id: int, call_sid: str, call_from: s
     conn = get_conn()
     cur = conn.cursor()
     
-    cur.execute(sql("""
-        INSERT INTO call_usage (user_id, agent_id, call_sid, call_from, call_to, status)
-        VALUES ({PH}, {PH}, {PH}, {PH}, {PH}, 'active')
-    """), (user_id, agent_id, call_sid, call_from, call_to))
+    if USE_POSTGRES:
+        # PostgreSQL - use RETURNING to get the ID
+        cur.execute(sql("""
+            INSERT INTO call_usage (user_id, agent_id, call_sid, call_from, call_to, status)
+            VALUES ({PH}, {PH}, {PH}, {PH}, {PH}, 'active')
+            RETURNING id
+        """), (user_id, agent_id, call_sid, call_from, call_to))
+        row = cur.fetchone()
+        call_id = row['id'] if isinstance(row, dict) else row[0]
+    else:
+        # SQLite - use lastrowid
+        cur.execute(sql("""
+            INSERT INTO call_usage (user_id, agent_id, call_sid, call_from, call_to, status)
+            VALUES ({PH}, {PH}, {PH}, {PH}, {PH}, 'active')
+        """), (user_id, agent_id, call_sid, call_from, call_to))
+        call_id = cur.lastrowid
     
     conn.commit()
-    call_id = cur.lastrowid
     conn.close()
     
     return call_id
