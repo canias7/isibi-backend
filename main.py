@@ -412,7 +412,7 @@ async def handle_media_stream(websocket: WebSocket):
                                     "role": "assistant",
                                     "content": [
                                         {
-                                            "type": "input_text",
+                                            "type": "text",  # Changed from 'input_text' to 'text'
                                             "text": first_message
                                         }
                                     ]

@@ -634,7 +634,8 @@ def end_call_tracking(call_sid: str, duration_seconds: int, cost_usd: float, rev
     row = cur.fetchone()
     
     if row:
-        user_id = row[0]
+        # Handle both dict (PostgreSQL) and tuple (SQLite)
+        user_id = row['user_id'] if isinstance(row, dict) else row[0]
         month = datetime.now().strftime("%Y-%m")
         minutes = duration_seconds / 60.0
         
