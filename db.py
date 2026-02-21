@@ -708,7 +708,18 @@ def get_call_history(user_id: int, limit: int = 50):
         LIMIT {PH}
     """), (user_id, limit))
     
-    calls = [dict(row) for row in cur.fetchall()]
+    calls = []
+    for row in cur.fetchall():
+        call_dict = dict(row)
+        
+        # Convert datetime objects to strings for PostgreSQL
+        if call_dict.get("started_at") and not isinstance(call_dict["started_at"], str):
+            call_dict["started_at"] = str(call_dict["started_at"])
+        if call_dict.get("ended_at") and not isinstance(call_dict["ended_at"], str):
+            call_dict["ended_at"] = str(call_dict["ended_at"])
+            
+        calls.append(call_dict)
+    
     conn.close()
     
     return calls
@@ -897,7 +908,16 @@ def get_credit_transactions(user_id: int, limit: int = 50):
         LIMIT {PH}
     """), (user_id, limit))
     
-    transactions = [dict(row) for row in cur.fetchall()]
+    transactions = []
+    for row in cur.fetchall():
+        tx_dict = dict(row)
+        
+        # Convert datetime objects to strings for PostgreSQL
+        if tx_dict.get("created_at") and not isinstance(tx_dict["created_at"], str):
+            tx_dict["created_at"] = str(tx_dict["created_at"])
+            
+        transactions.append(tx_dict)
+    
     conn.close()
     
     return transactions

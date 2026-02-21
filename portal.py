@@ -371,23 +371,15 @@ def get_credits_balance(user=Depends(verify_token)):
 
 @router.post("/credits/purchase")
 def purchase_credits(payload: PurchaseCreditsRequest, user=Depends(verify_token)):
-    """Add credits to user's account (after successful payment)"""
-    user_id = user["id"]
-    
-    # In production, verify payment with Stripe/PayPal here
-    # For now, we'll just add the credits
-    
-    description = f"Credit purchase: ${payload.amount}"
-    if payload.transaction_id:
-        description += f" (Transaction: {payload.transaction_id})"
-    
-    new_balance = add_credits(user_id, payload.amount, description)
-    
-    return {
-        "ok": True,
-        "amount_added": payload.amount,
-        "new_balance": new_balance
-    }
+    """
+    DEPRECATED: Use Stripe payment flow instead.
+    This endpoint should NOT be called directly from frontend.
+    Credits are added automatically via Stripe webhook after successful payment.
+    """
+    raise HTTPException(
+        status_code=400, 
+        detail="Direct credit purchase is not allowed. Please use the Stripe payment flow via /credits/create-payment-intent"
+    )
 
 
 @router.get("/credits/transactions")
