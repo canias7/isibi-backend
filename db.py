@@ -307,10 +307,18 @@ def create_tenant_if_missing(phone_number: str):
     conn = get_conn()
     cur = conn.cursor()
 
-    cur.execute(
-        sql("INSERT OR IGNORE INTO tenants (phone_number, agent_prompt) VALUES ({PH}, {PH})"),
-        (phone_number, "")
-    )
+    if USE_POSTGRES:
+        # PostgreSQL syntax
+        cur.execute(
+            sql("INSERT INTO tenants (phone_number, agent_prompt) VALUES ({PH}, {PH}) ON CONFLICT (phone_number) DO NOTHING"),
+            (phone_number, "")
+        )
+    else:
+        # SQLite syntax
+        cur.execute(
+            sql("INSERT OR IGNORE INTO tenants (phone_number, agent_prompt) VALUES ({PH}, {PH})"),
+            (phone_number, "")
+        )
 
     conn.commit()
     conn.close()
@@ -509,6 +517,12 @@ def get_agent(owner_user_id: int, agent_id: int):
 
     # Convert Row to dict
     agent_dict = dict(row)
+    
+    # Convert datetime objects to strings for PostgreSQL
+    if agent_dict.get("created_at") and not isinstance(agent_dict["created_at"], str):
+        agent_dict["created_at"] = str(agent_dict["created_at"])
+    if agent_dict.get("updated_at") and not isinstance(agent_dict["updated_at"], str):
+        agent_dict["updated_at"] = str(agent_dict["updated_at"])
     
     # Parse tools_json if present
     tools_raw = agent_dict.get("tools_json") or "{}"
