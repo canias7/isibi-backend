@@ -916,7 +916,8 @@ def deduct_credits(user_id: int, amount: float, call_id: int = None, description
         conn.close()
         return {"success": False, "error": "No credit account found"}
     
-    current_balance = row[0]
+    # Handle both dict (PostgreSQL) and tuple (SQLite)
+    current_balance = float(row['balance']) if isinstance(row, dict) else row[0]
     
     if current_balance < amount:
         conn.close()
