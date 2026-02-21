@@ -697,14 +697,25 @@ def get_user_usage(user_id: int, month: str = None):
     row = cur.fetchone()
     
     if row:
-        result = {
-            "month": month,
-            "total_calls": row[0],
-            "total_minutes": round(row[1], 2),
-            "total_cost_usd": round(row[2], 4),
-            "total_revenue_usd": round(row[3], 2),
-            "total_profit_usd": round(row[4], 2)
-        }
+        # Handle both dict (PostgreSQL) and tuple (SQLite)
+        if isinstance(row, dict):
+            result = {
+                "month": month,
+                "total_calls": row['total_calls'],
+                "total_minutes": round(float(row['total_minutes']), 2),
+                "total_cost_usd": round(float(row['total_cost_usd']), 4),
+                "total_revenue_usd": round(float(row['total_revenue_usd']), 2),
+                "total_profit_usd": round(float(row['total_profit_usd']), 2)
+            }
+        else:
+            result = {
+                "month": month,
+                "total_calls": row[0],
+                "total_minutes": round(row[1], 2),
+                "total_cost_usd": round(row[2], 4),
+                "total_revenue_usd": round(row[3], 2),
+                "total_profit_usd": round(row[4], 2)
+            }
     else:
         result = {
             "month": month,
