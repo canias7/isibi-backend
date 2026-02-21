@@ -142,11 +142,15 @@ def init_db():
         tools_json TEXT,
         google_calendar_credentials TEXT,
         google_calendar_id TEXT,
+        deleted_at {TIMESTAMP},
         created_at {TIMESTAMP} DEFAULT CURRENT_TIMESTAMP,
         updated_at {TIMESTAMP} DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(owner_user_id) REFERENCES users(id)
     )
     """)
+    
+    # Add deleted_at column if it doesn't exist (migration)
+    add_column_if_missing('agents', 'deleted_at', f'{TIMESTAMP}')
     
     # Usage tracking table
     cur.execute(f"""
@@ -441,7 +445,7 @@ def list_agents(owner_user_id: int):
             created_at,
             updated_at
         FROM agents
-        WHERE owner_user_id = {PH}
+        WHERE owner_user_id = {PH} AND deleted_at IS NULL
         ORDER BY id DESC
         """),
         (owner_user_id,)
@@ -504,7 +508,7 @@ def get_agent(owner_user_id: int, agent_id: int):
             system_prompt, voice, provider, first_message, tools_json,
             created_at, updated_at
         FROM agents
-        WHERE id = {PH} AND owner_user_id = {PH}
+        WHERE id = {PH} AND owner_user_id = {PH} AND deleted_at IS NULL
         """),
         (agent_id, owner_user_id)
     )
@@ -566,7 +570,7 @@ def update_agent(owner_user_id: int, agent_id: int, **fields):
         UPDATE agents
         SET {set_clause},
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = {{PH}} AND owner_user_id = {{PH}}
+        WHERE id = {{PH}} AND owner_user_id = {{PH}} AND deleted_at IS NULL
     """
     
     cur.execute(sql(query), params)
@@ -577,12 +581,16 @@ def update_agent(owner_user_id: int, agent_id: int, **fields):
     return changed
 
 def delete_agent(owner_user_id: int, agent_id: int):
-    """Delete an agent. Only the owner can delete their own agents."""
+    """
+    Soft delete an agent (marks as deleted but keeps for historical call data).
+    Only the owner can delete their own agents.
+    """
     conn = get_conn()
     cur = conn.cursor()
     
+    # Soft delete - set deleted_at timestamp instead of actual deletion
     cur.execute(
-        sql("DELETE FROM agents WHERE id = {PH} AND owner_user_id = {PH}"),
+        sql("UPDATE agents SET deleted_at = CURRENT_TIMESTAMP WHERE id = {PH} AND owner_user_id = {PH} AND deleted_at IS NULL"),
         (agent_id, owner_user_id)
     )
     
@@ -988,7 +996,7 @@ def assign_google_calendar_to_agent(user_id: int, agent_id: int):
         UPDATE agents
         SET google_calendar_credentials = {PH},
             google_calendar_id = {PH}
-        WHERE id = {PH} AND owner_user_id = {PH}
+        WHERE id = {PH} AND owner_user_id = {PH} AND deleted_at IS NULL
     """), (user_creds["credentials"], user_creds["calendar_id"], agent_id, user_id))
     
     conn.commit()
