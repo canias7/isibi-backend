@@ -18,6 +18,10 @@ if USE_POSTGRES:
         
         PH = "%s"  # SQL placeholder for PostgreSQL
         
+        def sql(query):
+            """Replace {PH} placeholders in query string"""
+            return query.replace("{PH}", PH)
+        
         print("✅ Using PostgreSQL database")
     except ImportError as e:
         print(f"⚠️ PostgreSQL import failed: {e}")
@@ -35,6 +39,10 @@ if USE_POSTGRES:
             return conn
         
         PH = "?"  # SQL placeholder for SQLite
+        
+        def sql(query):
+            """Replace {PH} placeholders in query string"""
+            return query.replace("{PH}", PH)
 else:
     import sqlite3
     
@@ -48,6 +56,10 @@ else:
         return conn
     
     PH = "?"  # SQL placeholder for SQLite
+    
+    def sql(query):
+        """Replace {PH} placeholders in query string"""
+        return query.replace("{PH}", PH)
     
     print("⚠️ Using SQLite database (local dev)")
     
@@ -255,7 +267,7 @@ def get_tenant_by_number(phone):
     cur = conn.cursor()
 
     cur.execute(
-        f"SELECT id, phone_number FROM tenants WHERE phone_number = {PH}",
+        sql("SELECT id, phone_number FROM tenants WHERE phone_number = {PH}"),
         (phone,)
     )
 
@@ -269,7 +281,7 @@ def get_agent_prompt(tenant_id):
     cur = conn.cursor()
 
     cur.execute(
-        f"SELECT agent_prompt FROM tenants WHERE id = {PH}",
+        sql("SELECT agent_prompt FROM tenants WHERE id = {PH}"),
         (tenant_id,)
     )
 
@@ -283,7 +295,7 @@ def set_agent_prompt(tenant_id, prompt):
     cur = conn.cursor()
 
     cur.execute(
-        f"UPDATE tenants SET agent_prompt = {PH} WHERE id = {PH}",
+        sql("UPDATE tenants SET agent_prompt = {PH} WHERE id = {PH}"),
         (prompt, tenant_id)
     )
 
@@ -296,7 +308,7 @@ def create_tenant_if_missing(phone_number: str):
     cur = conn.cursor()
 
     cur.execute(
-        f"INSERT OR IGNORE INTO tenants (phone_number, agent_prompt) VALUES ({PH}, {PH})",
+        sql("INSERT OR IGNORE INTO tenants (phone_number, agent_prompt) VALUES ({PH}, {PH})"),
         (phone_number, "")
     )
 
@@ -313,7 +325,7 @@ def create_user(email: str, password: str, tenant_phone: str | None = None):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        f"INSERT INTO users (email, password_hash, tenant_phone) VALUES ({PH}, {PH}, {PH})",
+        sql("INSERT INTO users (email, password_hash, tenant_phone) VALUES ({PH}, {PH}, {PH})"),
         (email.strip().lower(), password_hash, tenant_phone),
     )
     conn.commit()
@@ -323,7 +335,7 @@ def get_user_by_email(email: str):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        f"SELECT id, email, password_hash, tenant_phone FROM users WHERE email = {PH}",
+        sql("SELECT id, email, password_hash, tenant_phone FROM users WHERE email = {PH}"),
         (email.strip().lower(),),
     )
     row = cur.fetchone()
@@ -370,7 +382,7 @@ def create_agent(
     tools_json = json.dumps(tools or {})
 
     cur.execute(
-        f"""
+        sql("""
         INSERT INTO agents (
             owner_user_id,
             name,
@@ -383,7 +395,7 @@ def create_agent(
             tools_json
         )
         VALUES ({PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH})
-        """,
+        """),
         (
             owner_user_id,
             name,
@@ -407,7 +419,7 @@ def list_agents(owner_user_id: int):
     cur = conn.cursor()
 
     cur.execute(
-        f"""
+        sql("""
         SELECT
             id,
             name,
@@ -423,7 +435,7 @@ def list_agents(owner_user_id: int):
         FROM agents
         WHERE owner_user_id = {PH}
         ORDER BY id DESC
-        """,
+        """),
         (owner_user_id,)
     )
 
@@ -478,14 +490,14 @@ def get_agent(owner_user_id: int, agent_id: int):
     cur = conn.cursor()
 
     cur.execute(
-        f"""
+        sql("""
         SELECT
             id, owner_user_id, name, business_name, phone_number,
             system_prompt, voice, provider, first_message, tools_json,
             created_at, updated_at
         FROM agents
         WHERE id = {PH} AND owner_user_id = {PH}
-        """,
+        """),
         (agent_id, owner_user_id)
     )
 
@@ -537,12 +549,12 @@ def update_agent(owner_user_id: int, agent_id: int, **fields):
     cur = conn.cursor()
 
     cur.execute(
-        f"""
+        sql("""
         UPDATE agents
         SET {set_clause},
             updated_at = CURRENT_TIMESTAMP
         WHERE id = {PH} AND owner_user_id = {PH}
-        """,
+        """),
         params
     )
 
@@ -557,7 +569,7 @@ def delete_agent(owner_user_id: int, agent_id: int):
     cur = conn.cursor()
     
     cur.execute(
-        f"DELETE FROM agents WHERE id = {PH} AND owner_user_id = {PH}",
+        sql("DELETE FROM agents WHERE id = {PH} AND owner_user_id = {PH}"),
         (agent_id, owner_user_id)
     )
     
@@ -574,10 +586,10 @@ def start_call_tracking(user_id: int, agent_id: int, call_sid: str, call_from: s
     conn = get_conn()
     cur = conn.cursor()
     
-    cur.execute(f"""
+    cur.execute(sql("""
         INSERT INTO call_usage (user_id, agent_id, call_sid, call_from, call_to, status)
         VALUES ({PH}, {PH}, {PH}, {PH}, {PH}, 'active')
-    """, (user_id, agent_id, call_sid, call_from, call_to))
+    """), (user_id, agent_id, call_sid, call_from, call_to))
     
     conn.commit()
     call_id = cur.lastrowid
@@ -593,7 +605,7 @@ def end_call_tracking(call_sid: str, duration_seconds: int, cost_usd: float, rev
     
     profit_usd = revenue_usd - cost_usd
     
-    cur.execute(f"""
+    cur.execute(sql("""
         UPDATE call_usage 
         SET duration_seconds = {PH},
             cost_usd = {PH},
@@ -602,10 +614,10 @@ def end_call_tracking(call_sid: str, duration_seconds: int, cost_usd: float, rev
             ended_at = CURRENT_TIMESTAMP,
             status = 'completed'
         WHERE call_sid = {PH}
-    """, (duration_seconds, cost_usd, revenue_usd, profit_usd, call_sid))
+    """), (duration_seconds, cost_usd, revenue_usd, profit_usd, call_sid))
     
     # Get user_id for monthly summary
-    cur.execute(f"SELECT user_id FROM call_usage WHERE call_sid = {PH}", (call_sid,))
+    cur.execute(sql("SELECT user_id FROM call_usage WHERE call_sid = {PH}"), (call_sid,))
     row = cur.fetchone()
     
     if row:
@@ -614,16 +626,16 @@ def end_call_tracking(call_sid: str, duration_seconds: int, cost_usd: float, rev
         minutes = duration_seconds / 60.0
         
         # Update monthly summary
-        cur.execute(f"""
+        cur.execute(sql("""
             INSERT INTO monthly_usage (user_id, month, total_calls, total_minutes, total_cost_usd, total_revenue_usd, total_profit_usd)
             VALUES ({PH}, {PH}, 1, {PH}, {PH}, {PH}, {PH})
             ON CONFLICT(user_id, month) DO UPDATE SET
                 total_calls = total_calls + 1,
-                total_minutes = total_minutes + ?,
-                total_cost_usd = total_cost_usd + ?,
-                total_revenue_usd = total_revenue_usd + ?,
-                total_profit_usd = total_profit_usd + ?
-        """, (user_id, month, minutes, cost_usd, revenue_usd, profit_usd, minutes, cost_usd, revenue_usd, profit_usd))
+                total_minutes = total_minutes + {PH},
+                total_cost_usd = total_cost_usd + {PH},
+                total_revenue_usd = total_revenue_usd + {PH},
+                total_profit_usd = total_profit_usd + {PH}
+        """), (user_id, month, minutes, cost_usd, revenue_usd, profit_usd, minutes, cost_usd, revenue_usd, profit_usd))
     
     conn.commit()
     conn.close()
@@ -638,11 +650,11 @@ def get_user_usage(user_id: int, month: str = None):
         month = datetime.now().strftime("%Y-%m")
     
     # Get monthly summary
-    cur.execute(f"""
+    cur.execute(sql("""
         SELECT total_calls, total_minutes, total_cost_usd, total_revenue_usd, total_profit_usd
         FROM monthly_usage
         WHERE user_id = {PH} AND month = {PH}
-    """, (user_id, month))
+    """), (user_id, month))
     
     row = cur.fetchone()
     
@@ -674,14 +686,14 @@ def get_call_history(user_id: int, limit: int = 50):
     conn = get_conn()
     cur = conn.cursor()
     
-    cur.execute(f"""
+    cur.execute(sql("""
         SELECT c.*, a.name as agent_name
         FROM call_usage c
         LEFT JOIN agents a ON c.agent_id = a.id
         WHERE c.user_id = {PH}
         ORDER BY c.started_at DESC
         LIMIT ?
-    """, (user_id, limit))
+    """), (user_id, limit))
     
     calls = [dict(row) for row in cur.fetchall()]
     conn.close()
@@ -713,11 +725,11 @@ def get_user_credits(user_id: int):
     conn = get_conn()
     cur = conn.cursor()
     
-    cur.execute(f"""
+    cur.execute(sql("""
         SELECT balance, total_purchased, total_used
         FROM user_credits
         WHERE user_id = {PH}
-    """, (user_id,))
+    """), (user_id,))
     
     row = cur.fetchone()
     
@@ -740,19 +752,19 @@ def get_user_credits(user_id: int):
     
     # User doesn't have credits record yet - create one
     try:
-        cur.execute(f"""
+        cur.execute(sql("""
             INSERT INTO user_credits (user_id, balance, total_purchased, total_used)
             VALUES ({PH}, 0.0, 0.0, 0.0)
-        """, (user_id,))
+        """), (user_id,))
         conn.commit()
     except sqlite3.IntegrityError:
         # Race condition - record was created by another thread
         # Just fetch it again
-        cur.execute(f"""
+        cur.execute(sql("""
             SELECT balance, total_purchased, total_used
             FROM user_credits
             WHERE user_id = {PH}
-        """, (user_id,))
+        """), (user_id,))
         row = cur.fetchone()
         if row:
             if isinstance(row, dict):
@@ -787,23 +799,29 @@ def add_credits(user_id: int, amount: float, description: str = "Credit purchase
     get_user_credits(user_id)
     
     # Update balance
-    cur.execute(f"""
+    cur.execute(sql("""
         UPDATE user_credits
-        SET balance = balance + ?,
-            total_purchased = total_purchased + ?,
+        SET balance = balance + {PH},
+            total_purchased = total_purchased + {PH},
             updated_at = CURRENT_TIMESTAMP
         WHERE user_id = {PH}
-    """, (amount, amount, user_id))
+    """), (amount, amount, user_id))
     
     # Get new balance
-    cur.execute(f"SELECT balance FROM user_credits WHERE user_id = {PH}", (user_id,))
-    new_balance = cur.fetchone()[0]
+    cur.execute(sql("SELECT balance FROM user_credits WHERE user_id = {PH}"), (user_id,))
+    row = cur.fetchone()
+    
+    # Handle both dict and tuple
+    if isinstance(row, dict):
+        new_balance = float(row['balance'])
+    else:
+        new_balance = row[0]
     
     # Record transaction
-    cur.execute(f"""
+    cur.execute(sql("""
         INSERT INTO credit_transactions (user_id, amount, type, description, balance_after)
         VALUES ({PH}, {PH}, 'purchase', {PH}, {PH})
-    """, (user_id, amount, description, new_balance))
+    """), (user_id, amount, description, new_balance))
     
     conn.commit()
     conn.close()
@@ -817,7 +835,7 @@ def deduct_credits(user_id: int, amount: float, call_id: int = None, description
     cur = conn.cursor()
     
     # Check balance
-    cur.execute(f"SELECT balance FROM user_credits WHERE user_id = {PH}", (user_id,))
+    cur.execute(sql("SELECT balance FROM user_credits WHERE user_id = {PH}"), (user_id,))
     row = cur.fetchone()
     
     if not row:
@@ -833,19 +851,19 @@ def deduct_credits(user_id: int, amount: float, call_id: int = None, description
     # Deduct credits
     new_balance = current_balance - amount
     
-    cur.execute(f"""
+    cur.execute(sql("""
         UPDATE user_credits
         SET balance = {PH},
-            total_used = total_used + ?,
+            total_used = total_used + {PH},
             updated_at = CURRENT_TIMESTAMP
         WHERE user_id = {PH}
-    """, (new_balance, amount, user_id))
+    """), (new_balance, amount, user_id))
     
     # Record transaction
-    cur.execute(f"""
+    cur.execute(sql("""
         INSERT INTO credit_transactions (user_id, amount, type, description, balance_after, call_id)
         VALUES ({PH}, {PH}, 'usage', {PH}, {PH}, {PH})
-    """, (user_id, -amount, description, new_balance, call_id))
+    """), (user_id, -amount, description, new_balance, call_id))
     
     conn.commit()
     conn.close()
@@ -858,13 +876,13 @@ def get_credit_transactions(user_id: int, limit: int = 50):
     conn = get_conn()
     cur = conn.cursor()
     
-    cur.execute(f"""
+    cur.execute(sql("""
         SELECT *
         FROM credit_transactions
         WHERE user_id = {PH}
         ORDER BY created_at DESC
         LIMIT ?
-    """, (user_id, limit))
+    """), (user_id, limit))
     
     transactions = [dict(row) for row in cur.fetchall()]
     conn.close()
@@ -885,11 +903,11 @@ def get_user_google_credentials(user_id: int):
     conn = get_conn()
     cur = conn.cursor()
     
-    cur.execute(f"""
+    cur.execute(sql("""
         SELECT google_calendar_credentials, google_calendar_id
         FROM user_google_credentials
         WHERE user_id = {PH}
-    """, (user_id,))
+    """), (user_id,))
     
     row = cur.fetchone()
     conn.close()
@@ -907,14 +925,14 @@ def save_user_google_credentials(user_id: int, credentials_json: str, calendar_i
     conn = get_conn()
     cur = conn.cursor()
     
-    cur.execute(f"""
+    cur.execute(sql("""
         INSERT INTO user_google_credentials (user_id, google_calendar_credentials, google_calendar_id)
         VALUES ({PH}, {PH}, {PH})
         ON CONFLICT(user_id) DO UPDATE SET
             google_calendar_credentials = {PH},
             google_calendar_id = {PH},
             updated_at = CURRENT_TIMESTAMP
-    """, (user_id, credentials_json, calendar_id, credentials_json, calendar_id))
+    """), (user_id, credentials_json, calendar_id, credentials_json, calendar_id))
     
     conn.commit()
     conn.close()
@@ -932,12 +950,12 @@ def assign_google_calendar_to_agent(user_id: int, agent_id: int):
     conn = get_conn()
     cur = conn.cursor()
     
-    cur.execute(f"""
+    cur.execute(sql("""
         UPDATE agents
         SET google_calendar_credentials = {PH},
             google_calendar_id = {PH}
         WHERE id = {PH} AND owner_user_id = {PH}
-    """, (user_creds["credentials"], user_creds["calendar_id"], agent_id, user_id))
+    """), (user_creds["credentials"], user_creds["calendar_id"], agent_id, user_id))
     
     conn.commit()
     changed = cur.rowcount > 0
@@ -948,7 +966,7 @@ def assign_google_calendar_to_agent(user_id: int, agent_id: int):
 def get_agent_by_id(agent_id: int):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute(f"SELECT * FROM agents WHERE id = {PH}", (agent_id,))
+    cur.execute(sql("SELECT * FROM agents WHERE id = {PH}"), (agent_id,))
     row = cur.fetchone()
     conn.close()
     return dict(row) if row else None
@@ -956,7 +974,7 @@ def get_agent_by_id(agent_id: int):
 def get_agent_by_phone(phone_number: str):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute(f"SELECT * FROM agents WHERE phone_number = {PH} LIMIT 1", (phone_number,))
+    cur.execute(sql("SELECT * FROM agents WHERE phone_number = {PH} LIMIT 1"), (phone_number,))
     row = cur.fetchone()
     conn.close()
     return dict(row) if row else None
