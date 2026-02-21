@@ -142,6 +142,7 @@ def init_db():
         tools_json TEXT,
         google_calendar_credentials TEXT,
         google_calendar_id TEXT,
+        twilio_number_sid TEXT,
         deleted_at {TIMESTAMP},
         created_at {TIMESTAMP} DEFAULT CURRENT_TIMESTAMP,
         updated_at {TIMESTAMP} DEFAULT CURRENT_TIMESTAMP,
@@ -151,6 +152,9 @@ def init_db():
     
     # Add deleted_at column if it doesn't exist (migration)
     add_column_if_missing(conn, 'agents', 'deleted_at', f'{TIMESTAMP}')
+    
+    # Add twilio_number_sid column if it doesn't exist (migration)
+    add_column_if_missing(conn, 'agents', 'twilio_number_sid', 'TEXT')
     
     # Add partial unique index for phone numbers (only for non-deleted agents)
     if USE_POSTGRES:

@@ -7,10 +7,21 @@ from google_calendar import get_google_oauth_url, handle_google_callback, discon
 from fastapi.responses import RedirectResponse, HTMLResponse
 import os
 import stripe
+from twilio.rest import Client
 
 # Stripe configuration
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+
+# Twilio configuration
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+BACKEND_URL = os.getenv("BACKEND_URL", "https://isibi-backend.onrender.com")
+
+# Initialize Twilio client only if credentials are available
+twilio_client = None
+if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
+    twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 router = APIRouter(prefix="/api", tags=["portal"])
 
@@ -40,6 +51,11 @@ class CreateAgentRequest(BaseModel):
     # integrations
     enable_calendar: Optional[bool] = False  # If true, assign user's calendar to this agent
 
+class PurchaseNumberRequest(BaseModel):
+    area_code: Optional[str] = None  # e.g., "704", "212"
+    country: Optional[str] = "US"
+    contains: Optional[str] = None  # Search for numbers containing this pattern
+    
 class UpdateAgentRequest(BaseModel):
     phone_number: Optional[str] = None
     business_name: Optional[str] = None
@@ -177,12 +193,25 @@ def api_update_agent(agent_id: int, payload: UpdateAgentRequest, user=Depends(ve
 def api_delete_agent(agent_id: int, user=Depends(verify_token)):
     owner_user_id = user["id"]
     
+    # Get agent before deleting to check if it has a Twilio number
+    agent = get_agent(owner_user_id, agent_id)
+    
+    # Release Twilio number if it exists
+    if agent and agent.get("twilio_number_sid") and twilio_client:
+        try:
+            twilio_client.incoming_phone_numbers(agent["twilio_number_sid"]).delete()
+            print(f"✅ Released Twilio number {agent.get('phone_number')} for deleted agent {agent_id}")
+        except Exception as e:
+            print(f"⚠️ Failed to release Twilio number: {e}")
+            # Continue with delete anyway
+    
     deleted = delete_agent(owner_user_id, agent_id)
     
     if not deleted:
         raise HTTPException(status_code=404, detail="Agent not found or you don't have permission to delete it")
     
     return {"ok": True, "deleted": True}
+
 
 
 # ========== Google Calendar Integration ==========
@@ -475,3 +504,166 @@ async def stripe_webhook(request: Request):
         print(f"✅ Added ${credit_amount} credits to user {user_id}")
     
     return {"ok": True}
+
+
+# ========== Phone Number Management ==========
+
+@router.post("/agents/{agent_id}/phone/search")
+def search_available_numbers(agent_id: int, payload: PurchaseNumberRequest, user=Depends(verify_token)):
+    """
+    Search for available Twilio numbers
+    """
+    if not twilio_client:
+        raise HTTPException(status_code=503, detail="Twilio not configured")
+    
+    user_id = user["id"]
+    agent = get_agent(user_id, agent_id)
+    
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    try:
+        # Search for available numbers
+        search_params = {
+            "limit": 10
+        }
+        
+        if payload.area_code:
+            search_params["area_code"] = payload.area_code
+        
+        if payload.contains:
+            search_params["contains"] = payload.contains
+        
+        available_numbers = twilio_client.available_phone_numbers(payload.country).local.list(**search_params)
+        
+        results = [
+            {
+                "phone_number": num.phone_number,
+                "friendly_name": num.friendly_name,
+                "locality": num.locality,
+                "region": num.region,
+                "monthly_cost": 1.15  # Twilio's base cost
+            }
+            for num in available_numbers
+        ]
+        
+        return {
+            "available_numbers": results,
+            "your_price": 5.00  # What customer pays
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+@router.post("/agents/{agent_id}/phone/purchase")
+def purchase_phone_number(agent_id: int, payload: PurchaseNumberRequest, user=Depends(verify_token)):
+    """
+    Purchase a Twilio phone number for the agent
+    """
+    if not twilio_client:
+        raise HTTPException(status_code=503, detail="Twilio not configured")
+    
+    user_id = user["id"]
+    agent = get_agent(user_id, agent_id)
+    
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    if agent.get("phone_number"):
+        raise HTTPException(status_code=400, detail="Agent already has a phone number")
+    
+    try:
+        # Search for available numbers
+        search_params = {"limit": 1}
+        
+        if payload.area_code:
+            search_params["area_code"] = payload.area_code
+        
+        if payload.contains:
+            search_params["contains"] = payload.contains
+        
+        available_numbers = twilio_client.available_phone_numbers(payload.country).local.list(**search_params)
+        
+        if not available_numbers:
+            raise HTTPException(status_code=404, detail="No numbers available with those criteria")
+        
+        # Purchase the number
+        purchased_number = twilio_client.incoming_phone_numbers.create(
+            phone_number=available_numbers[0].phone_number,
+            voice_url=f"{BACKEND_URL}/incoming-call",
+            voice_method="POST"
+        )
+        
+        # Update agent with the new number
+        update_agent(
+            user_id, 
+            agent_id, 
+            phone_number=purchased_number.phone_number,
+            twilio_number_sid=purchased_number.sid
+        )
+        
+        return {
+            "success": True,
+            "phone_number": purchased_number.phone_number,
+            "twilio_sid": purchased_number.sid,
+            "monthly_cost": 5.00,  # What you charge customer
+            "message": f"Phone number {purchased_number.phone_number} has been assigned to your agent!"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Purchase failed: {str(e)}")
+
+
+@router.delete("/agents/{agent_id}/phone/release")
+def release_phone_number(agent_id: int, user=Depends(verify_token)):
+    """
+    Release the Twilio number (when agent is deleted or user wants to change number)
+    """
+    if not twilio_client:
+        raise HTTPException(status_code=503, detail="Twilio not configured")
+    
+    user_id = user["id"]
+    agent = get_agent(user_id, agent_id)
+    
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    if not agent.get("twilio_number_sid"):
+        raise HTTPException(status_code=404, detail="No Twilio number to release")
+    
+    try:
+        # Release the Twilio number
+        twilio_client.incoming_phone_numbers(agent["twilio_number_sid"]).delete()
+        
+        # Clear from agent record
+        update_agent(user_id, agent_id, phone_number=None, twilio_number_sid=None)
+        
+        return {
+            "success": True,
+            "message": "Phone number released successfully"
+        }
+        
+    except Exception as e:
+        # If Twilio delete fails, still clear from database
+        update_agent(user_id, agent_id, phone_number=None, twilio_number_sid=None)
+        raise HTTPException(status_code=500, detail=f"Release failed: {str(e)}")
+
+
+@router.get("/agents/{agent_id}/phone/status")
+def get_phone_number_status(agent_id: int, user=Depends(verify_token)):
+    """
+    Get phone number status for an agent
+    """
+    user_id = user["id"]
+    agent = get_agent(user_id, agent_id)
+    
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    return {
+        "has_number": bool(agent.get("phone_number")),
+        "phone_number": agent.get("phone_number"),
+        "twilio_sid": agent.get("twilio_number_sid"),
+        "monthly_cost": 5.00 if agent.get("phone_number") else 0.00
+    }
