@@ -923,6 +923,8 @@ def add_credits(user_id: int, amount: float, description: str = "Credit purchase
 
 def deduct_credits(user_id: int, amount: float, call_id: int = None, description: str = "Call usage"):
     """Deduct credits from user's account (when they use the service)"""
+    print(f"📝 deduct_credits called: user_id={user_id}, amount={amount}, description={description}")
+    
     conn = get_conn()
     cur = conn.cursor()
     
@@ -931,18 +933,22 @@ def deduct_credits(user_id: int, amount: float, call_id: int = None, description
     row = cur.fetchone()
     
     if not row:
+        print(f"❌ No credit account found for user {user_id}")
         conn.close()
         return {"success": False, "error": "No credit account found"}
     
     # Handle both dict (PostgreSQL) and tuple (SQLite)
     current_balance = float(row['balance']) if isinstance(row, dict) else row[0]
+    print(f"💰 Current balance: ${current_balance:.2f}")
     
     if current_balance < amount:
+        print(f"❌ Insufficient credits: has ${current_balance:.2f}, needs ${amount:.2f}")
         conn.close()
         return {"success": False, "error": "Insufficient credits", "balance": current_balance}
     
     # Deduct credits
     new_balance = current_balance - amount
+    print(f"💳 Deducting ${amount:.2f}, new balance will be ${new_balance:.2f}")
     
     cur.execute(sql("""
         UPDATE user_credits
@@ -952,13 +958,18 @@ def deduct_credits(user_id: int, amount: float, call_id: int = None, description
         WHERE user_id = {PH}
     """), (new_balance, amount, user_id))
     
+    print(f"✅ Updated user_credits table, rows affected: {cur.rowcount}")
+    
     # Record transaction
     cur.execute(sql("""
         INSERT INTO credit_transactions (user_id, amount, type, description, balance_after, call_id)
         VALUES ({PH}, {PH}, 'usage', {PH}, {PH}, {PH})
     """), (user_id, -amount, description, new_balance, call_id))
     
+    print(f"✅ Inserted transaction record, rows affected: {cur.rowcount}")
+    
     conn.commit()
+    print(f"✅ Transaction committed to database")
     conn.close()
     
     return {"success": True, "balance": new_balance, "deducted": amount}
