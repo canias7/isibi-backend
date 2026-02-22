@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from auth_routes import verify_token  # your JWT verify function
-from db import create_agent, list_agents, get_agent, update_agent, delete_agent, get_user_usage, get_call_history, get_user_credits, add_credits, get_credit_transactions, get_user_google_credentials, assign_google_calendar_to_agent
+from db import create_agent, list_agents, get_agent, update_agent, delete_agent, get_user_usage, get_call_history, get_user_credits, add_credits, get_credit_transactions, get_user_google_credentials, assign_google_calendar_to_agent, deduct_credits
 from google_calendar import get_google_oauth_url, handle_google_callback, disconnect_google_calendar
 from fastapi.responses import RedirectResponse, HTMLResponse
 import os
@@ -569,11 +569,21 @@ def purchase_phone_number(payload: PurchaseNumberRequest, user=Depends(verify_to
     """
     Purchase a Twilio phone number (BEFORE creating agent)
     Returns the number so it can be used when creating the agent
+    
+    IMPORTANT: Immediately deducts $1.15 from customer's credits
     """
     if not twilio_client:
         raise HTTPException(status_code=503, detail="Twilio not configured")
     
     user_id = user["id"]
+    
+    # Check if user has enough credits BEFORE purchasing
+    credits = get_user_credits(user_id)
+    if credits["balance"] < 1.15:
+        raise HTTPException(
+            status_code=402,  # Payment Required
+            detail=f"Insufficient credits. You have ${credits['balance']:.2f}, need $1.15. Please add credits first."
+        )
     
     try:
         # Search for available numbers
@@ -590,7 +600,7 @@ def purchase_phone_number(payload: PurchaseNumberRequest, user=Depends(verify_to
         if not available_numbers:
             raise HTTPException(status_code=404, detail="No numbers available with those criteria")
         
-        # Purchase the number
+        # Purchase the number from Twilio
         purchased_number = twilio_client.incoming_phone_numbers.create(
             phone_number=available_numbers[0].phone_number,
             voice_url=f"{BACKEND_URL}/incoming-call",
@@ -598,15 +608,43 @@ def purchase_phone_number(payload: PurchaseNumberRequest, user=Depends(verify_to
             friendly_name=f"User {user_id} - Reserved"  # Mark as reserved until agent is created
         )
         
+        # Deduct $1.15 from customer's credits immediately
+        print(f"💰 Attempting to deduct $1.15 from user {user_id}")
+        deduct_result = deduct_credits(
+            user_id=user_id,
+            amount=1.15,
+            description=f"Phone number purchase: {purchased_number.phone_number}"
+        )
+        print(f"💰 Deduct result: {deduct_result}")
+        
+        if not deduct_result["success"]:
+            # If deduction fails, release the number we just purchased
+            print(f"❌ Credit deduction failed: {deduct_result}")
+            try:
+                twilio_client.incoming_phone_numbers(purchased_number.sid).delete()
+            except:
+                pass  # Best effort cleanup
+            
+            raise HTTPException(
+                status_code=500,
+                detail=f"Credit deduction failed: {deduct_result.get('error')}"
+            )
+        
+        print(f"✅ Successfully deducted $1.15, new balance: ${deduct_result['balance']}")
+        
         return {
             "success": True,
             "phone_number": purchased_number.phone_number,
             "twilio_sid": purchased_number.sid,
             "friendly_name": purchased_number.friendly_name,
-            "monthly_cost": 1.15,  # What customer pays (Twilio's cost, no markup)
-            "message": f"Phone number {purchased_number.phone_number} is ready! Use it when creating your agent. Monthly cost: $1.15"
+            "monthly_cost": 1.15,
+            "charged_now": 1.15,
+            "new_balance": deduct_result["balance"],
+            "message": f"Phone number {purchased_number.phone_number} purchased! $1.15 deducted from your credits. New balance: ${deduct_result['balance']:.2f}"
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Purchase failed: {str(e)}")
 
@@ -616,6 +654,8 @@ def release_phone_number_by_sid(twilio_sid: str, user=Depends(verify_token)):
     """
     Release a Twilio number that was purchased but not used
     (In case user changes their mind before creating agent)
+    
+    NOTE: No refund given - Twilio doesn't refund us either
     
     Use the twilio_sid from the purchase response or my-numbers list
     """
@@ -632,13 +672,15 @@ def release_phone_number_by_sid(twilio_sid: str, user=Depends(verify_token)):
         if not (number.friendly_name and f"User {user_id}" in number.friendly_name):
             raise HTTPException(status_code=403, detail="You don't own this phone number")
         
-        # Release the Twilio number
+        phone_number = number.phone_number
+        
+        # Release the Twilio number (no refund - Twilio doesn't refund us)
         twilio_client.incoming_phone_numbers(twilio_sid).delete()
         
         return {
             "success": True,
-            "message": f"Phone number {number.phone_number} released successfully",
-            "phone_number": number.phone_number
+            "message": f"Phone number {phone_number} released successfully.",
+            "phone_number": phone_number
         }
         
     except HTTPException:
@@ -652,6 +694,8 @@ def release_phone_number_by_number(phone_number: str, user=Depends(verify_token)
     """
     Release a phone number by its phone number (e.g., +17045551234)
     Alternative to using twilio_sid
+    
+    NOTE: No refund given - Twilio doesn't refund us either
     """
     if not twilio_client:
         raise HTTPException(status_code=503, detail="Twilio not configured")
@@ -671,12 +715,12 @@ def release_phone_number_by_number(phone_number: str, user=Depends(verify_token)
         if not matching_number:
             raise HTTPException(status_code=404, detail="Phone number not found or doesn't belong to you")
         
-        # Release it
+        # Release it (no refund - Twilio doesn't refund us)
         twilio_client.incoming_phone_numbers(matching_number.sid).delete()
         
         return {
             "success": True,
-            "message": f"Phone number {phone_number} released successfully",
+            "message": f"Phone number {phone_number} released successfully.",
             "phone_number": phone_number
         }
         
