@@ -525,7 +525,10 @@ def search_available_numbers(payload: PurchaseNumberRequest, user=Depends(verify
     Search for available Twilio numbers (BEFORE creating agent)
     """
     if not twilio_client:
-        raise HTTPException(status_code=503, detail="Twilio not configured")
+        raise HTTPException(
+            status_code=503, 
+            detail="Twilio not configured. Please add TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN to environment variables."
+        )
     
     try:
         # Search for available numbers
@@ -554,7 +557,7 @@ def search_available_numbers(payload: PurchaseNumberRequest, user=Depends(verify
         
         return {
             "available_numbers": results,
-            "your_price": 5.00  # What customer pays
+            "monthly_cost": 1.15  # What customer pays (Twilio's cost, no markup)
         }
         
     except Exception as e:
@@ -600,8 +603,8 @@ def purchase_phone_number(payload: PurchaseNumberRequest, user=Depends(verify_to
             "phone_number": purchased_number.phone_number,
             "twilio_sid": purchased_number.sid,
             "friendly_name": purchased_number.friendly_name,
-            "monthly_cost": 5.00,  # What you charge customer
-            "message": f"Phone number {purchased_number.phone_number} is ready! Use it when creating your agent."
+            "monthly_cost": 1.15,  # What customer pays (Twilio's cost, no markup)
+            "message": f"Phone number {purchased_number.phone_number} is ready! Use it when creating your agent. Monthly cost: $1.15"
         }
         
     except Exception as e:
@@ -613,19 +616,72 @@ def release_phone_number_by_sid(twilio_sid: str, user=Depends(verify_token)):
     """
     Release a Twilio number that was purchased but not used
     (In case user changes their mind before creating agent)
+    
+    Use the twilio_sid from the purchase response or my-numbers list
     """
     if not twilio_client:
         raise HTTPException(status_code=503, detail="Twilio not configured")
     
+    user_id = user["id"]
+    
     try:
+        # Verify this number belongs to the user before deleting
+        number = twilio_client.incoming_phone_numbers(twilio_sid).fetch()
+        
+        # Check if it's the user's number (by friendly name)
+        if not (number.friendly_name and f"User {user_id}" in number.friendly_name):
+            raise HTTPException(status_code=403, detail="You don't own this phone number")
+        
         # Release the Twilio number
         twilio_client.incoming_phone_numbers(twilio_sid).delete()
         
         return {
             "success": True,
-            "message": "Phone number released successfully"
+            "message": f"Phone number {number.phone_number} released successfully",
+            "phone_number": number.phone_number
         }
         
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Release failed: {str(e)}")
+
+
+@router.delete("/phone/release")
+def release_phone_number_by_number(phone_number: str, user=Depends(verify_token)):
+    """
+    Release a phone number by its phone number (e.g., +17045551234)
+    Alternative to using twilio_sid
+    """
+    if not twilio_client:
+        raise HTTPException(status_code=503, detail="Twilio not configured")
+    
+    user_id = user["id"]
+    
+    try:
+        # Find all numbers belonging to this user
+        all_numbers = twilio_client.incoming_phone_numbers.list()
+        
+        matching_number = None
+        for num in all_numbers:
+            if num.phone_number == phone_number and f"User {user_id}" in (num.friendly_name or ""):
+                matching_number = num
+                break
+        
+        if not matching_number:
+            raise HTTPException(status_code=404, detail="Phone number not found or doesn't belong to you")
+        
+        # Release it
+        twilio_client.incoming_phone_numbers(matching_number.sid).delete()
+        
+        return {
+            "success": True,
+            "message": f"Phone number {phone_number} released successfully",
+            "phone_number": phone_number
+        }
+        
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Release failed: {str(e)}")
 
@@ -651,7 +707,7 @@ def get_my_purchased_numbers(user=Depends(verify_token)):
                 "phone_number": num.phone_number,
                 "twilio_sid": num.sid,
                 "friendly_name": num.friendly_name,
-                "monthly_cost": 5.00
+                "monthly_cost": 1.15  # Twilio's cost, no markup
             }
             for num in all_numbers
             if f"User {user_id}" in (num.friendly_name or "")
@@ -717,5 +773,5 @@ def get_phone_number_status(agent_id: int, user=Depends(verify_token)):
         "has_number": bool(agent.get("phone_number")),
         "phone_number": agent.get("phone_number"),
         "twilio_sid": agent.get("twilio_number_sid"),
-        "monthly_cost": 5.00 if agent.get("phone_number") else 0.00
+        "monthly_cost": 1.15 if agent.get("phone_number") else 0.00
     }
