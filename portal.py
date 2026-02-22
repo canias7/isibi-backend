@@ -819,3 +819,97 @@ def get_phone_number_status(agent_id: int, user=Depends(verify_token)):
         "twilio_sid": agent.get("twilio_number_sid"),
         "monthly_cost": 1.15 if agent.get("phone_number") else 0.00
     }
+
+
+# ========== Call Detail Breakdown ==========
+
+@router.get("/usage/call-details/{call_id}")
+def get_call_details(call_id: int, user=Depends(verify_token)):
+    """
+    Get detailed cost breakdown for a specific call
+    Shows what customer was charged for each component
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    # Get call details
+    cur.execute(sql("""
+        SELECT 
+            cu.*,
+            a.name as agent_name
+        FROM call_usage cu
+        LEFT JOIN agents a ON cu.agent_id = a.id
+        WHERE cu.id = {PH} AND cu.user_id = {PH}
+    """), (call_id, user_id))
+    
+    row = cur.fetchone()
+    conn.close()
+    
+    if not row:
+        raise HTTPException(status_code=404, detail="Call not found")
+    
+    # Convert to dict
+    call = dict(row)
+    
+    # Build detailed breakdown
+    breakdown = {
+        "call_id": call_id,
+        "agent_name": call.get("agent_name"),
+        "call_sid": call.get("call_sid"),
+        "duration_seconds": call.get("duration_seconds", 0),
+        "duration_minutes": round(call.get("duration_seconds", 0) / 60.0, 2),
+        "started_at": str(call.get("started_at")),
+        "ended_at": str(call.get("ended_at")),
+        
+        "total_charged": round(call.get("revenue_usd", 0), 2),
+        
+        "breakdown": {
+            "input_tokens": {
+                "quantity": call.get("input_tokens", 0),
+                "unit": "tokens",
+                "cost": round(call.get("revenue_input_tokens", 0), 4),
+                "description": "Text input to AI (system prompt, transcriptions)"
+            },
+            "output_tokens": {
+                "quantity": call.get("output_tokens", 0),
+                "unit": "tokens",
+                "cost": round(call.get("revenue_output_tokens", 0), 4),
+                "description": "Text output from AI (responses)"
+            },
+            "input_audio": {
+                "quantity": round(call.get("input_audio_minutes", 0), 2),
+                "unit": "minutes",
+                "cost": round(call.get("revenue_input_audio", 0), 4),
+                "description": "Audio from caller (speech recognition)"
+            },
+            "output_audio": {
+                "quantity": round(call.get("output_audio_minutes", 0), 2),
+                "unit": "minutes",
+                "cost": round(call.get("revenue_output_audio", 0), 4),
+                "description": "Audio to caller (AI voice synthesis)"
+            },
+            "phone_call": {
+                "quantity": round(call.get("duration_seconds", 0) / 60.0, 2),
+                "unit": "minutes",
+                "cost": round(call.get("revenue_twilio_phone", 0), 4),
+                "description": "Twilio phone line time"
+            }
+        },
+        
+        "summary": {
+            "ai_processing": round(
+                call.get("revenue_input_tokens", 0) + 
+                call.get("revenue_output_tokens", 0) + 
+                call.get("revenue_input_audio", 0) + 
+                call.get("revenue_output_audio", 0), 
+                2
+            ),
+            "phone_service": round(call.get("revenue_twilio_phone", 0), 2),
+            "total": round(call.get("revenue_usd", 0), 2)
+        }
+    }
+    
+    return breakdown

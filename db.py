@@ -156,6 +156,22 @@ def init_db():
     # Add twilio_number_sid column if it doesn't exist (migration)
     add_column_if_missing(conn, 'agents', 'twilio_number_sid', 'TEXT')
     
+    # Add detailed cost breakdown columns to call_usage (migration)
+    add_column_if_missing(conn, 'call_usage', 'input_tokens', 'INTEGER DEFAULT 0')
+    add_column_if_missing(conn, 'call_usage', 'output_tokens', 'INTEGER DEFAULT 0')
+    add_column_if_missing(conn, 'call_usage', 'input_audio_minutes', f'{REAL} DEFAULT 0.0')
+    add_column_if_missing(conn, 'call_usage', 'output_audio_minutes', f'{REAL} DEFAULT 0.0')
+    add_column_if_missing(conn, 'call_usage', 'cost_input_tokens', f'{REAL} DEFAULT 0.0')
+    add_column_if_missing(conn, 'call_usage', 'cost_output_tokens', f'{REAL} DEFAULT 0.0')
+    add_column_if_missing(conn, 'call_usage', 'cost_input_audio', f'{REAL} DEFAULT 0.0')
+    add_column_if_missing(conn, 'call_usage', 'cost_output_audio', f'{REAL} DEFAULT 0.0')
+    add_column_if_missing(conn, 'call_usage', 'cost_twilio_phone', f'{REAL} DEFAULT 0.0')
+    add_column_if_missing(conn, 'call_usage', 'revenue_input_tokens', f'{REAL} DEFAULT 0.0')
+    add_column_if_missing(conn, 'call_usage', 'revenue_output_tokens', f'{REAL} DEFAULT 0.0')
+    add_column_if_missing(conn, 'call_usage', 'revenue_input_audio', f'{REAL} DEFAULT 0.0')
+    add_column_if_missing(conn, 'call_usage', 'revenue_output_audio', f'{REAL} DEFAULT 0.0')
+    add_column_if_missing(conn, 'call_usage', 'revenue_twilio_phone', f'{REAL} DEFAULT 0.0')
+    
     # Add partial unique index for phone numbers (only for non-deleted agents)
     if USE_POSTGRES:
         try:
@@ -183,6 +199,27 @@ def init_db():
         started_at {TIMESTAMP} DEFAULT CURRENT_TIMESTAMP,
         ended_at {TIMESTAMP},
         status TEXT DEFAULT 'active',
+        
+        -- Detailed cost breakdown
+        input_tokens INTEGER DEFAULT 0,
+        output_tokens INTEGER DEFAULT 0,
+        input_audio_minutes {REAL} DEFAULT 0.0,
+        output_audio_minutes {REAL} DEFAULT 0.0,
+        
+        -- Cost components (what YOU pay)
+        cost_input_tokens {REAL} DEFAULT 0.0,
+        cost_output_tokens {REAL} DEFAULT 0.0,
+        cost_input_audio {REAL} DEFAULT 0.0,
+        cost_output_audio {REAL} DEFAULT 0.0,
+        cost_twilio_phone {REAL} DEFAULT 0.0,
+        
+        -- Revenue components (what CUSTOMER pays)
+        revenue_input_tokens {REAL} DEFAULT 0.0,
+        revenue_output_tokens {REAL} DEFAULT 0.0,
+        revenue_input_audio {REAL} DEFAULT 0.0,
+        revenue_output_audio {REAL} DEFAULT 0.0,
+        revenue_twilio_phone {REAL} DEFAULT 0.0,
+        
         FOREIGN KEY(user_id) REFERENCES users(id),
         FOREIGN KEY(agent_id) REFERENCES agents(id)
     )
@@ -653,13 +690,72 @@ def start_call_tracking(user_id: int, agent_id: int, call_sid: str, call_from: s
     return call_id
 
 
-def end_call_tracking(call_sid: str, duration_seconds: int, cost_usd: float, revenue_usd: float):
-    """End call tracking and calculate cost, revenue, and profit"""
+def end_call_tracking(call_sid: str, duration_seconds: int, cost_usd: float, revenue_usd: float, 
+                     usage_details: dict = None):
+    """
+    End call tracking and calculate cost, revenue, and profit
+    
+    usage_details can include:
+    {
+        "input_tokens": 1000,
+        "output_tokens": 2000,
+        "input_audio_seconds": 120,
+        "output_audio_seconds": 130
+    }
+    """
     conn = get_conn()
     cur = conn.cursor()
     
     profit_usd = revenue_usd - cost_usd
     
+    # Default empty usage details if not provided
+    if not usage_details:
+        usage_details = {}
+    
+    # Extract usage metrics
+    input_tokens = usage_details.get('input_tokens', 0)
+    output_tokens = usage_details.get('output_tokens', 0)
+    input_audio_seconds = usage_details.get('input_audio_seconds', 0)
+    output_audio_seconds = usage_details.get('output_audio_seconds', 0)
+    
+    # Convert seconds to minutes for audio
+    input_audio_minutes = input_audio_seconds / 60.0
+    output_audio_minutes = output_audio_seconds / 60.0
+    
+    # OpenAI Realtime API Pricing (as of Feb 2025)
+    # Text: $5/1M input tokens, $20/1M output tokens
+    # Audio: $100/1M input tokens (~$0.06/min), $200/1M output tokens (~$0.24/min)
+    # Approximations: 1 min audio ≈ 1,500 tokens
+    
+    # Calculate YOUR costs (what you pay OpenAI + Twilio)
+    cost_input_tokens = (input_tokens / 1_000_000) * 5.0  # $5 per 1M tokens
+    cost_output_tokens = (output_tokens / 1_000_000) * 20.0  # $20 per 1M tokens
+    cost_input_audio = input_audio_minutes * 0.06  # ~$0.06/min
+    cost_output_audio = output_audio_minutes * 0.24  # ~$0.24/min
+    cost_twilio_phone = (duration_seconds / 60.0) * 0.0085  # $0.0085/min
+    
+    # Calculate total cost
+    total_component_cost = (cost_input_tokens + cost_output_tokens + 
+                           cost_input_audio + cost_output_audio + cost_twilio_phone)
+    
+    # Use provided cost_usd or calculated cost
+    final_cost_usd = cost_usd if cost_usd > 0 else total_component_cost
+    
+    # Calculate CUSTOMER revenue (what you charge them) - 5x markup
+    revenue_input_tokens = cost_input_tokens * 5
+    revenue_output_tokens = cost_output_tokens * 5
+    revenue_input_audio = cost_input_audio * 5
+    revenue_output_audio = cost_output_audio * 5
+    revenue_twilio_phone = cost_twilio_phone * 5
+    
+    # Calculate total revenue
+    total_component_revenue = (revenue_input_tokens + revenue_output_tokens + 
+                               revenue_input_audio + revenue_output_audio + revenue_twilio_phone)
+    
+    # Use provided revenue or calculated revenue
+    final_revenue_usd = revenue_usd if revenue_usd > 0 else total_component_revenue
+    
+    # Update call record with detailed breakdown
     cur.execute(sql("""
         UPDATE call_usage 
         SET duration_seconds = {PH},
@@ -667,9 +763,30 @@ def end_call_tracking(call_sid: str, duration_seconds: int, cost_usd: float, rev
             revenue_usd = {PH},
             profit_usd = {PH},
             ended_at = CURRENT_TIMESTAMP,
-            status = 'completed'
+            status = 'completed',
+            
+            input_tokens = {PH},
+            output_tokens = {PH},
+            input_audio_minutes = {PH},
+            output_audio_minutes = {PH},
+            
+            cost_input_tokens = {PH},
+            cost_output_tokens = {PH},
+            cost_input_audio = {PH},
+            cost_output_audio = {PH},
+            cost_twilio_phone = {PH},
+            
+            revenue_input_tokens = {PH},
+            revenue_output_tokens = {PH},
+            revenue_input_audio = {PH},
+            revenue_output_audio = {PH},
+            revenue_twilio_phone = {PH}
         WHERE call_sid = {PH}
-    """), (duration_seconds, cost_usd, revenue_usd, profit_usd, call_sid))
+    """), (duration_seconds, final_cost_usd, final_revenue_usd, profit_usd,
+           input_tokens, output_tokens, input_audio_minutes, output_audio_minutes,
+           cost_input_tokens, cost_output_tokens, cost_input_audio, cost_output_audio, cost_twilio_phone,
+           revenue_input_tokens, revenue_output_tokens, revenue_input_audio, revenue_output_audio, revenue_twilio_phone,
+           call_sid))
     
     # Get user_id for monthly summary
     cur.execute(sql("SELECT user_id FROM call_usage WHERE call_sid = {PH}"), (call_sid,))
