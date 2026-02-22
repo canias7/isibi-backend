@@ -827,7 +827,7 @@ def get_phone_number_status(agent_id: int, user=Depends(verify_token)):
 def get_call_details(call_id: int, user=Depends(verify_token)):
     """
     Get detailed cost breakdown for a specific call
-    Shows what customer was charged for each component
+    Shows what customer was charged for each service provider
     """
     user_id = user["id"]
     
@@ -839,7 +839,8 @@ def get_call_details(call_id: int, user=Depends(verify_token)):
     cur.execute(sql("""
         SELECT 
             cu.*,
-            a.name as agent_name
+            a.name as agent_name,
+            a.provider as ai_provider
         FROM call_usage cu
         LEFT JOIN agents a ON cu.agent_id = a.id
         WHERE cu.id = {PH} AND cu.user_id = {PH}
@@ -854,61 +855,49 @@ def get_call_details(call_id: int, user=Depends(verify_token)):
     # Convert to dict
     call = dict(row)
     
-    # Build detailed breakdown
+    # Get values
+    duration_minutes = round(call.get("duration_seconds", 0) / 60.0, 2)
+    total_revenue = call.get("revenue_usd", 0) or 0
+    ai_provider = call.get("ai_provider") or "OpenAI"
+    
+    # Calculate breakdown
+    # Twilio phone cost: $0.0085/min (your cost) * 5 (markup) = $0.0425/min customer pays
+    twilio_cost = duration_minutes * 0.0425
+    
+    # OpenAI cost: remainder
+    openai_cost = total_revenue - twilio_cost
+    
+    # Build simple breakdown
     breakdown = {
         "call_id": call_id,
         "agent_name": call.get("agent_name"),
         "call_sid": call.get("call_sid"),
         "duration_seconds": call.get("duration_seconds", 0),
-        "duration_minutes": round(call.get("duration_seconds", 0) / 60.0, 2),
+        "duration_minutes": duration_minutes,
         "started_at": str(call.get("started_at")),
         "ended_at": str(call.get("ended_at")),
         
-        "total_charged": round(call.get("revenue_usd", 0), 2),
+        "total_charged": round(total_revenue, 2),
         
-        "breakdown": {
-            "input_tokens": {
-                "quantity": call.get("input_tokens", 0),
-                "unit": "tokens",
-                "cost": round(call.get("revenue_input_tokens", 0), 4),
-                "description": "Text input to AI (system prompt, transcriptions)"
+        "breakdown": [
+            {
+                "provider": ai_provider,
+                "description": "AI voice processing (speech recognition, voice synthesis, conversation)",
+                "cost": round(openai_cost, 4),
+                "percentage": round((openai_cost / total_revenue * 100) if total_revenue > 0 else 0, 1)
             },
-            "output_tokens": {
-                "quantity": call.get("output_tokens", 0),
-                "unit": "tokens",
-                "cost": round(call.get("revenue_output_tokens", 0), 4),
-                "description": "Text output from AI (responses)"
-            },
-            "input_audio": {
-                "quantity": round(call.get("input_audio_minutes", 0), 2),
-                "unit": "minutes",
-                "cost": round(call.get("revenue_input_audio", 0), 4),
-                "description": "Audio from caller (speech recognition)"
-            },
-            "output_audio": {
-                "quantity": round(call.get("output_audio_minutes", 0), 2),
-                "unit": "minutes",
-                "cost": round(call.get("revenue_output_audio", 0), 4),
-                "description": "Audio to caller (AI voice synthesis)"
-            },
-            "phone_call": {
-                "quantity": round(call.get("duration_seconds", 0) / 60.0, 2),
-                "unit": "minutes",
-                "cost": round(call.get("revenue_twilio_phone", 0), 4),
-                "description": "Twilio phone line time"
+            {
+                "provider": "Twilio",
+                "description": "Phone line service",
+                "cost": round(twilio_cost, 4),
+                "percentage": round((twilio_cost / total_revenue * 100) if total_revenue > 0 else 0, 1)
             }
-        },
+        ],
         
         "summary": {
-            "ai_processing": round(
-                call.get("revenue_input_tokens", 0) + 
-                call.get("revenue_output_tokens", 0) + 
-                call.get("revenue_input_audio", 0) + 
-                call.get("revenue_output_audio", 0), 
-                2
-            ),
-            "phone_service": round(call.get("revenue_twilio_phone", 0), 2),
-            "total": round(call.get("revenue_usd", 0), 2)
+            "ai_service": round(openai_cost, 2),
+            "phone_service": round(twilio_cost, 2),
+            "total": round(total_revenue, 2)
         }
     }
     
