@@ -1394,3 +1394,173 @@ def generate_prompt_legacy(payload: GeneratePromptRequest, user=Depends(verify_t
     Legacy endpoint - redirects to new generate-prompt
     """
     return generate_ai_prompt(payload, user)
+
+
+# ========== Slack Integration ==========
+
+from slack_integration import (
+    notify_new_call,
+    notify_call_ended,
+    notify_appointment_scheduled,
+    notify_order_placed,
+    notify_escalation,
+    notify_low_credits
+)
+
+class SlackConfigRequest(BaseModel):
+    slack_bot_token: str
+    slack_default_channel: str = "#calls"
+    slack_enabled: bool = True
+
+@router.post("/slack/configure")
+def configure_slack(payload: SlackConfigRequest, user=Depends(verify_token)):
+    """
+    Configure Slack integration for user
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    # Add columns if they don't exist (migration)
+    from db import add_column_if_missing
+    add_column_if_missing(conn, 'users', 'slack_bot_token', 'TEXT')
+    add_column_if_missing(conn, 'users', 'slack_default_channel', 'TEXT')
+    add_column_if_missing(conn, 'users', 'slack_enabled', 'BOOLEAN DEFAULT FALSE')
+    
+    cur.execute(sql("""
+        UPDATE users
+        SET slack_bot_token = {PH},
+            slack_default_channel = {PH},
+            slack_enabled = {PH}
+        WHERE id = {PH}
+    """), (payload.slack_bot_token, payload.slack_default_channel, payload.slack_enabled, user_id))
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        "success": True,
+        "message": "Slack configured successfully",
+        "channel": payload.slack_default_channel
+    }
+
+
+@router.get("/slack/status")
+def get_slack_status(user=Depends(verify_token)):
+    """
+    Check if Slack is configured for this user
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    try:
+        cur.execute(sql("""
+            SELECT slack_enabled, slack_default_channel
+            FROM users
+            WHERE id = {PH}
+        """), (user_id,))
+        
+        row = cur.fetchone()
+    except:
+        # Columns don't exist yet
+        conn.close()
+        return {"configured": False}
+    
+    conn.close()
+    
+    if not row:
+        return {"configured": False}
+    
+    if isinstance(row, dict):
+        enabled = row.get('slack_enabled')
+        channel = row.get('slack_default_channel')
+    else:
+        enabled = row[0] if row else False
+        channel = row[1] if len(row) > 1 else None
+    
+    return {
+        "configured": bool(enabled),
+        "channel": channel or "#calls"
+    }
+
+
+@router.post("/slack/test")
+def test_slack_notification(user=Depends(verify_token)):
+    """
+    Send a test notification to Slack
+    """
+    user_id = user["id"]
+    
+    # Get user's Slack token
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    try:
+        cur.execute(sql("""
+            SELECT slack_bot_token, slack_default_channel
+            FROM users
+            WHERE id = {PH}
+        """), (user_id,))
+        
+        row = cur.fetchone()
+        conn.close()
+        
+        if not row:
+            return {"success": False, "error": "Slack not configured"}
+        
+        if isinstance(row, dict):
+            token = row.get('slack_bot_token')
+            channel = row.get('slack_default_channel') or "#calls"
+        else:
+            token = row[0]
+            channel = row[1] if len(row) > 1 else "#calls"
+        
+        if not token:
+            return {"success": False, "error": "Slack token not found"}
+        
+        # Send test notification
+        result = notify_new_call(
+            agent_name="Test Agent",
+            caller_number="+1-555-TEST",
+            channel=channel,
+            token=token
+        )
+        
+        return result
+        
+    except Exception as e:
+        conn.close()
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/slack/disable")
+def disable_slack(user=Depends(verify_token)):
+    """
+    Disable Slack notifications
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    try:
+        cur.execute(sql("""
+            UPDATE users
+            SET slack_enabled = FALSE
+            WHERE id = {PH}
+        """), (user_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        return {"success": True, "message": "Slack notifications disabled"}
+    except Exception as e:
+        conn.close()
+        return {"success": False, "error": str(e)}

@@ -309,6 +309,12 @@ def init_db():
     add_column_if_missing(conn, "agents", "google_calendar_credentials", "TEXT")  # Google OAuth tokens
     add_column_if_missing(conn, "agents", "google_calendar_id", "TEXT")  # Calendar ID (default = 'primary')
     
+    # Slack integration columns
+    add_column_if_missing(conn, "users", "slack_bot_token", "TEXT")
+    add_column_if_missing(conn, "users", "slack_default_channel", "TEXT")
+    add_column_if_missing(conn, "users", "slack_enabled", "BOOLEAN DEFAULT FALSE")
+    add_column_if_missing(conn, "agents", "slack_channel", "TEXT")  # Per-agent channel override
+    
     # Usage tracking migrations
     add_column_if_missing(conn, "call_usage", "revenue_usd", "REAL DEFAULT 0.0")
     add_column_if_missing(conn, "call_usage", "profit_usd", "REAL DEFAULT 0.0")
