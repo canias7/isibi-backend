@@ -222,6 +222,7 @@ async def handle_media_stream(websocket: WebSocket):
         mark_queue = []
         response_start_timestamp_twilio = None
         first_message_sent = False  # Track if we've sent the greeting
+        call_summary = None  # Store what happened during the call
 
         async def send_mark():
             if not stream_sid:
@@ -437,6 +438,12 @@ async def handle_media_stream(websocket: WebSocket):
                                         agent_tools.extend(sms_tools)
                                         logger.info(f"📱 SMS confirmation tools enabled ({len(sms_tools)} functions)")
                                     
+                                    # Add call summary tool (always available)
+                                    summary_tools = get_call_summary_tool()
+                                    if summary_tools:
+                                        agent_tools.extend(summary_tools)
+                                        logger.info(f"📋 Call summary tool enabled")
+                                    
                                     # Convert to None if still empty
                                     if not agent_tools:
                                         agent_tools = None
@@ -596,7 +603,8 @@ async def handle_media_stream(websocket: WebSocket):
                                                 duration=duration_seconds,
                                                 cost=credits_to_deduct,
                                                 channel=slack_channel,
-                                                token=slack_token
+                                                token=slack_token,
+                                                summary=call_summary
                                             )
                                             logger.info("📢 Slack notification sent: Call completed")
                                 except Exception as e:
@@ -644,7 +652,8 @@ async def handle_media_stream(websocket: WebSocket):
                                                 agent_name=agent.get('name', 'Unknown Agent'),
                                                 caller_number=call_from_number,
                                                 duration=duration_seconds,
-                                                cost=credits_to_deduct
+                                                cost=credits_to_deduct,
+                                                summary=call_summary
                                             )
                                             logger.info("📢 Teams notification sent: Call completed")
                                 except Exception as e:
@@ -766,6 +775,20 @@ async def handle_media_stream(websocket: WebSocket):
                                     from_number=agent_phone
                                 )
                                 logger.info(f"📱 Appointment confirmation SMS: {result}")
+                            
+                            # Log call summary
+                            elif func_name == "log_call_summary":
+                                nonlocal call_summary
+                                call_summary = args.get("summary")
+                                outcome = args.get("outcome")
+                                
+                                logger.info(f"📋 Call summary logged: {call_summary}")
+                                logger.info(f"🎯 Outcome: {outcome}")
+                                
+                                result = {
+                                    "success": True,
+                                    "message": "Call summary recorded"
+                                }
                             
                             if result:
                                 # Send function result back to OpenAI
@@ -1032,6 +1055,35 @@ def get_sms_tools() -> list:
                     }
                 },
                 "required": ["customer_phone", "customer_name", "service", "date", "time"]
+            }
+        }
+    ]
+
+
+def get_call_summary_tool() -> list:
+    """
+    Return OpenAI function definition for logging call summary.
+    AI calls this to record what was accomplished during the call.
+    """
+    return [
+        {
+            "type": "function",
+            "name": "log_call_summary",
+            "description": "Log what was accomplished during this call. Call this near the end of the conversation to record the outcome.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "Brief summary of what was accomplished (e.g., 'Scheduled haircut appointment for Feb 25 at 2pm' or 'Took order for 2 large pizzas, total $28.99, pickup at 6:30pm')"
+                    },
+                    "outcome": {
+                        "type": "string",
+                        "enum": ["appointment_scheduled", "order_placed", "question_answered", "escalated", "no_action"],
+                        "description": "Primary outcome of the call"
+                    }
+                },
+                "required": ["summary", "outcome"]
             }
         }
     ]

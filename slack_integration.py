@@ -84,9 +84,43 @@ def notify_new_call(agent_name: str, caller_number: str, channel: str = "#calls"
     )
 
 
-def notify_call_ended(agent_name: str, caller_number: str, duration: int, cost: float, channel: str = "#calls", token: str = None):
+def notify_call_ended(agent_name: str, caller_number: str, duration: int, cost: float, channel: str = "#calls", token: str = None, summary: str = None):
     """Notify when a call ends with summary"""
     duration_min = round(duration / 60, 1)
+    
+    fields = [
+        {
+            "type": "mrkdwn",
+            "text": f"*Agent:*\n{agent_name}"
+        },
+        {
+            "type": "mrkdwn",
+            "text": f"*From:*\n{caller_number}"
+        },
+        {
+            "type": "mrkdwn",
+            "text": f"*Duration:*\n{duration_min} minutes"
+        },
+        {
+            "type": "mrkdwn",
+            "text": f"*Cost:*\n${cost:.2f}"
+        }
+    ]
+    
+    # Add summary section if provided
+    sections = [{
+        "type": "section",
+        "fields": fields
+    }]
+    
+    if summary:
+        sections.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*📋 Call Summary:*\n{summary}"
+            }
+        })
     
     blocks = [
         {
@@ -95,29 +129,8 @@ def notify_call_ended(agent_name: str, caller_number: str, duration: int, cost: 
                 "type": "plain_text",
                 "text": "✅ Call Completed"
             }
-        },
-        {
-            "type": "section",
-            "fields": [
-                {
-                    "type": "mrkdwn",
-                    "text": f"*Agent:*\n{agent_name}"
-                },
-                {
-                    "type": "mrkdwn",
-                    "text": f"*From:*\n{caller_number}"
-                },
-                {
-                    "type": "mrkdwn",
-                    "text": f"*Duration:*\n{duration_min} minutes"
-                },
-                {
-                    "type": "mrkdwn",
-                    "text": f"*Cost:*\n${cost:.2f}"
-                }
-            ]
         }
-    ]
+    ] + sections
     
     return send_slack_notification(
         channel=channel,

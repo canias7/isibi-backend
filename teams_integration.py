@@ -67,20 +67,26 @@ def notify_new_call_teams(webhook_url: str, agent_name: str, caller_number: str)
     )
 
 
-def notify_call_ended_teams(webhook_url: str, agent_name: str, caller_number: str, duration: int, cost: float):
-    """Notify Teams when a call ends"""
+def notify_call_ended_teams(webhook_url: str, agent_name: str, caller_number: str, duration: int, cost: float, summary: str = None):
+    """Notify Teams when a call ends with optional summary of what happened"""
     duration_min = round(duration / 60, 1)
+    
+    fields = [
+        {"name": "Agent", "value": agent_name},
+        {"name": "From", "value": caller_number},
+        {"name": "Duration", "value": f"{duration_min} minutes"},
+        {"name": "Cost", "value": f"${cost:.2f}"}
+    ]
+    
+    # Add call summary if provided
+    if summary:
+        fields.append({"name": "📋 Call Summary", "value": summary})
     
     return send_teams_notification(
         webhook_url=webhook_url,
         title="✅ Call Completed",
         message=f"Call to {agent_name} finished",
-        fields=[
-            {"name": "Agent", "value": agent_name},
-            {"name": "From", "value": caller_number},
-            {"name": "Duration", "value": f"{duration_min} minutes"},
-            {"name": "Cost", "value": f"${cost:.2f}"}
-        ],
+        fields=fields,
         theme_color="0078D4"  # Microsoft Blue
     )
 
