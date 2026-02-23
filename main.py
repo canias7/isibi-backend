@@ -401,20 +401,20 @@ async def handle_media_stream(websocket: WebSocket):
                         last_assistant_item = None
                         
                         # Send first message if configured
-                        if first_message and not first_message_sent:
-                            logger.info(f"📢 Sending first message: {first_message}")
+                        if not first_message_sent:
+                            logger.info(f"📢 Triggering automatic greeting from system prompt")
                             
-                            # Send response.create with the message directly
+                            # Trigger the AI to start speaking immediately using the greeting from its system prompt
                             await openai_ws.send(json.dumps({
                                 "type": "response.create",
                                 "response": {
                                     "modalities": ["text", "audio"],
-                                    "instructions": f"Say this exact message: {first_message}"
+                                    "instructions": "Greet the caller now using the greeting from Section 2 of your system prompt."
                                 }
                             }))
                             
                             first_message_sent = True
-                            logger.info("📢 First message sent successfully")
+                            logger.info("📢 Automatic greeting triggered from system prompt")
 
                     elif evt == "media":
                         # Track timestamp so truncation math works
