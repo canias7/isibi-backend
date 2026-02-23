@@ -20,6 +20,7 @@ from auth import verify_token
 from twilio.twiml.voice_response import VoiceResponse, Connect, Stream
 from google_calendar import check_availability, create_appointment, list_appointments
 from datetime import datetime
+from slack_integration import notify_new_call, notify_call_ended
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -335,6 +336,40 @@ async def handle_media_stream(websocket: WebSocket):
                                             call_to=call_to
                                         )
                                         logger.info(f"📊 Call tracking started for user {owner_user_id}")
+                                        
+                                        # Send Slack notification for new call
+                                        try:
+                                            from db import get_conn, sql
+                                            conn = get_conn()
+                                            cur = conn.cursor()
+                                            cur.execute(sql("""
+                                                SELECT slack_bot_token, slack_default_channel, slack_enabled
+                                                FROM users WHERE id = {PH}
+                                            """), (owner_user_id,))
+                                            slack_row = cur.fetchone()
+                                            conn.close()
+                                            
+                                            if slack_row:
+                                                if isinstance(slack_row, dict):
+                                                    slack_token = slack_row.get('slack_bot_token')
+                                                    slack_channel = slack_row.get('slack_default_channel') or '#calls'
+                                                    slack_enabled = slack_row.get('slack_enabled')
+                                                else:
+                                                    slack_token = slack_row[0] if len(slack_row) > 0 else None
+                                                    slack_channel = slack_row[1] if len(slack_row) > 1 else '#calls'
+                                                    slack_enabled = slack_row[2] if len(slack_row) > 2 else False
+                                                
+                                                if slack_enabled and slack_token:
+                                                    notify_new_call(
+                                                        agent_name=agent.get('name', 'Unknown Agent'),
+                                                        caller_number=call_from,
+                                                        channel=slack_channel,
+                                                        token=slack_token
+                                                    )
+                                                    logger.info("📢 Slack notification sent: New call")
+                                        except Exception as e:
+                                            logger.warning(f"⚠️ Failed to send Slack notification: {e}")
+                                        
                                     except Exception as e:
                                         logger.error(f"❌ Failed to start call tracking: {e}")
                                 
@@ -479,6 +514,57 @@ async def handle_media_stream(websocket: WebSocket):
                                     logger.info(f"💳 Remaining balance: ${result['balance']:.2f}")
                                 else:
                                     logger.warning(f"⚠️ Credit deduction failed: {result.get('error')}")
+                                
+                                # Send Slack notification for call ended
+                                try:
+                                    from db import get_conn, sql
+                                    conn = get_conn()
+                                    cur = conn.cursor()
+                                    cur.execute(sql("""
+                                        SELECT slack_bot_token, slack_default_channel, slack_enabled
+                                        FROM users WHERE id = {PH}
+                                    """), (owner_user_id,))
+                                    slack_row = cur.fetchone()
+                                    conn.close()
+                                    
+                                    if slack_row:
+                                        if isinstance(slack_row, dict):
+                                            slack_token = slack_row.get('slack_bot_token')
+                                            slack_channel = slack_row.get('slack_default_channel') or '#calls'
+                                            slack_enabled = slack_row.get('slack_enabled')
+                                        else:
+                                            slack_token = slack_row[0] if len(slack_row) > 0 else None
+                                            slack_channel = slack_row[1] if len(slack_row) > 1 else '#calls'
+                                            slack_enabled = slack_row[2] if len(slack_row) > 2 else False
+                                        
+                                        if slack_enabled and slack_token:
+                                            # Get call_from from the call tracking
+                                            call_from_number = "Unknown"  # Default
+                                            try:
+                                                conn2 = get_conn()
+                                                cur2 = conn2.cursor()
+                                                cur2.execute(sql("""
+                                                    SELECT call_from FROM call_usage 
+                                                    WHERE call_sid = {PH}
+                                                """), (stream_sid,))
+                                                call_row = cur2.fetchone()
+                                                if call_row:
+                                                    call_from_number = call_row[0] if isinstance(call_row, tuple) else call_row.get('call_from')
+                                                conn2.close()
+                                            except:
+                                                pass
+                                            
+                                            notify_call_ended(
+                                                agent_name=agent.get('name', 'Unknown Agent'),
+                                                caller_number=call_from_number,
+                                                duration=duration_seconds,
+                                                cost=credits_to_deduct,
+                                                channel=slack_channel,
+                                                token=slack_token
+                                            )
+                                            logger.info("📢 Slack notification sent: Call completed")
+                                except Exception as e:
+                                    logger.warning(f"⚠️ Failed to send Slack notification: {e}")
                                     
                             except Exception as e:
                                 logger.error(f"❌ Failed to end call tracking: {e}")
