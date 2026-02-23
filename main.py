@@ -444,6 +444,12 @@ async def handle_media_stream(websocket: WebSocket):
                                         agent_tools.extend(summary_tools)
                                         logger.info(f"📋 Call summary tool enabled")
                                     
+                                    # Add Square payment tool (always available)
+                                    square_tools = get_square_payment_tool()
+                                    if square_tools:
+                                        agent_tools.extend(square_tools)
+                                        logger.info(f"💳 Square payment tool enabled")
+                                    
                                     # Convert to None if still empty
                                     if not agent_tools:
                                         agent_tools = None
@@ -790,6 +796,35 @@ async def handle_media_stream(websocket: WebSocket):
                                     "message": "Call summary recorded"
                                 }
                             
+                            # Process Square payment
+                            elif func_name == "process_payment":
+                                logger.info(f"💳 AI is processing payment via Square!")
+                                logger.info(f"💰 Amount: ${args.get('amount')}")
+                                
+                                from square_integration import create_payment
+                                
+                                # Convert amount to cents
+                                amount_dollars = args.get("amount")
+                                amount_cents = int(amount_dollars * 100)
+                                
+                                result = create_payment(
+                                    amount_cents=amount_cents,
+                                    card_number=args.get("card_number"),
+                                    exp_month=args.get("exp_month"),
+                                    exp_year=args.get("exp_year"),
+                                    cvv=args.get("cvv"),
+                                    postal_code=args.get("postal_code"),
+                                    customer_name=args.get("customer_name"),
+                                    description=args.get("description"),
+                                    reference_id=stream_sid  # Use call SID as reference
+                                )
+                                
+                                if result.get("success"):
+                                    logger.info(f"✅ Payment successful! ID: {result.get('payment_id')}")
+                                    logger.info(f"💳 Card: ****{result.get('card_last_4')}")
+                                else:
+                                    logger.error(f"❌ Payment failed: {result.get('error')}")
+                            
                             if result:
                                 # Send function result back to OpenAI
                                 await openai_ws.send(json.dumps({
@@ -1084,6 +1119,58 @@ def get_call_summary_tool() -> list:
                     }
                 },
                 "required": ["summary", "outcome"]
+            }
+        }
+    ]
+
+
+def get_square_payment_tool() -> list:
+    """
+    Return OpenAI function definition for processing Square payments.
+    AI calls this to charge customer's credit card during call.
+    """
+    return [
+        {
+            "type": "function",
+            "name": "process_payment",
+            "description": "Process a credit card payment through Square. Use this after customer provides card details.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "amount": {
+                        "type": "number",
+                        "description": "Total amount to charge in dollars (e.g., 29.99)"
+                    },
+                    "card_number": {
+                        "type": "string",
+                        "description": "16-digit credit card number"
+                    },
+                    "exp_month": {
+                        "type": "string",
+                        "description": "Expiration month (2 digits, e.g., '12')"
+                    },
+                    "exp_year": {
+                        "type": "string",
+                        "description": "Expiration year (4 digits, e.g., '2025')"
+                    },
+                    "cvv": {
+                        "type": "string",
+                        "description": "3-digit CVV security code"
+                    },
+                    "postal_code": {
+                        "type": "string",
+                        "description": "Billing ZIP code"
+                    },
+                    "customer_name": {
+                        "type": "string",
+                        "description": "Cardholder name"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Payment description (e.g., 'Order #12345 - 2 Large Pizzas')"
+                    }
+                },
+                "required": ["amount", "card_number", "exp_month", "exp_year", "cvv", "postal_code"]
             }
         }
     ]

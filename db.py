@@ -319,6 +319,11 @@ def init_db():
     add_column_if_missing(conn, "users", "teams_webhook_url", "TEXT")
     add_column_if_missing(conn, "users", "teams_enabled", "BOOLEAN DEFAULT FALSE")
     
+    # Square payment integration columns
+    add_column_if_missing(conn, "users", "square_access_token", "TEXT")
+    add_column_if_missing(conn, "users", "square_environment", "TEXT")
+    add_column_if_missing(conn, "users", "square_enabled", "BOOLEAN DEFAULT FALSE")
+    
     # Usage tracking migrations
     add_column_if_missing(conn, "call_usage", "revenue_usd", "REAL DEFAULT 0.0")
     add_column_if_missing(conn, "call_usage", "profit_usd", "REAL DEFAULT 0.0")

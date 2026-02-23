@@ -1330,17 +1330,25 @@ Maintain the following communication standards:
 
 ## 13. CALL ENDING SCRIPTS & SMS CONFIRMATIONS
 
-**CRITICAL: After completing orders or appointments, IMMEDIATELY send SMS confirmation!**
+**IMPORTANT: After collecting payment card details, you MUST use process_payment tool to charge the card!**
 
 **After Taking an Order:**
-1. Confirm order details and process payment
-2. **USE send_order_confirmation tool** to send SMS with order details
-3. Then say: "Perfect! I have your order for [items]. Your total is [total]. I've processed your payment ending in [last 4 digits]. Your order will be ready for [pickup/delivery] at [time]. You should receive a confirmation text shortly. Is there anything else I can help you with?"
+1. Confirm all order details
+2. Calculate total with tax and fees
+3. Ask for payment method
+4. **If paying by card:**
+   - Collect: card number, expiration (MM/YY), CVV, billing ZIP
+   - **USE process_payment tool** to charge the card
+   - Wait for confirmation
+   - If successful, say: "Perfect! Your payment of $[amount] has been processed. Card ending in [last 4 digits]."
+   - If failed, say: "I'm sorry, that card was declined. Do you have another card to try?"
+5. **USE send_order_confirmation tool** to send SMS with order details
+6. Then say: "Your order will be ready for [pickup/delivery] at [time]. You should receive a confirmation text shortly."
 
 **After Scheduling an Appointment:**
 1. Confirm appointment details
-2. **USE send_appointment_confirmation tool** to send SMS with appointment details
-3. Then say: "Great! I have you scheduled for [service] on [date] at [time]. You'll receive a confirmation text shortly. Is there anything else I can help you with today?"
+2. **USE send_appointment_confirmation tool** to send SMS
+3. Then say: "Great! You're all set for [service] on [date] at [time]. You'll receive a confirmation text shortly."
 
 **After Providing Information:**
 > "I'm glad I could help! Is there anything else you'd like to know about {business_name}?"
@@ -1355,15 +1363,17 @@ Maintain the following communication standards:
 ## AVAILABLE TOOLS
 
 You have access to the following capabilities:
-• **send_order_confirmation** - Send SMS confirmation after taking an order (USE THIS AUTOMATICALLY)
-• **send_appointment_confirmation** - Send SMS confirmation after booking appointment (USE THIS AUTOMATICALLY)
-• **log_call_summary** - Log what was accomplished during the call (USE THIS BEFORE ENDING THE CALL)
+• **process_payment** - Process credit card payments through Square (USE AFTER COLLECTING CARD INFO)
+• **send_order_confirmation** - Send SMS confirmation after taking an order (USE AFTER PAYMENT)
+• **send_appointment_confirmation** - Send SMS confirmation after booking appointment
+• **log_call_summary** - Log what was accomplished during the call (USE BEFORE ENDING THE CALL)
 • Calendar checking and appointment scheduling
 • Basic information lookup
 
 **IMPORTANT:** 
+- Always use process_payment when customer provides card details
 - Always use SMS confirmation tools after completing orders or appointments
-- Always use log_call_summary before saying goodbye to record what happened during the call
+- Always use log_call_summary before saying goodbye to record what happened
 
 
 ## FINAL REMINDER
@@ -1731,3 +1741,141 @@ def disable_teams(user=Depends(verify_token)):
     except Exception as e:
         conn.close()
         return {"success": False, "error": str(e)}
+
+
+# ========== Square Payment Integration ==========
+
+from square_integration import create_payment, create_customer, get_payment, refund_payment, list_payments
+
+class SquareConfigRequest(BaseModel):
+    square_access_token: str
+    square_environment: str = "sandbox"  # 'sandbox' or 'production'
+
+class SquarePaymentRequest(BaseModel):
+    amount: float  # Dollar amount (e.g., 29.99)
+    card_number: str
+    exp_month: str
+    exp_year: str
+    cvv: str
+    postal_code: str
+    customer_name: Optional[str] = None
+    description: Optional[str] = None
+    reference_id: Optional[str] = None
+
+@router.post("/square/configure")
+def configure_square(payload: SquareConfigRequest, user=Depends(verify_token)):
+    """
+    Configure Square integration for user
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    # Add columns if they don't exist
+    from db import add_column_if_missing
+    add_column_if_missing(conn, 'users', 'square_access_token', 'TEXT')
+    add_column_if_missing(conn, 'users', 'square_environment', 'TEXT')
+    add_column_if_missing(conn, 'users', 'square_enabled', 'BOOLEAN DEFAULT FALSE')
+    
+    cur.execute(sql("""
+        UPDATE users
+        SET square_access_token = {PH},
+            square_environment = {PH},
+            square_enabled = TRUE
+        WHERE id = {PH}
+    """), (payload.square_access_token, payload.square_environment, user_id))
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        "success": True,
+        "message": "Square configured successfully",
+        "environment": payload.square_environment
+    }
+
+
+@router.get("/square/status")
+def get_square_status(user=Depends(verify_token)):
+    """
+    Check if Square is configured
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    try:
+        cur.execute(sql("""
+            SELECT square_enabled, square_environment
+            FROM users
+            WHERE id = {PH}
+        """), (user_id,))
+        
+        row = cur.fetchone()
+    except:
+        conn.close()
+        return {"configured": False}
+    
+    conn.close()
+    
+    if not row:
+        return {"configured": False}
+    
+    if isinstance(row, dict):
+        enabled = row.get('square_enabled')
+        environment = row.get('square_environment')
+    else:
+        enabled = row[0] if row else False
+        environment = row[1] if len(row) > 1 else None
+    
+    return {
+        "configured": bool(enabled),
+        "environment": environment or "sandbox"
+    }
+
+
+@router.post("/square/test-payment")
+def test_square_payment(user=Depends(verify_token)):
+    """
+    Test Square payment with test card
+    """
+    # Square test card: 4111 1111 1111 1111
+    result = create_payment(
+        amount_cents=100,  # $1.00
+        card_number="4111111111111111",
+        exp_month="12",
+        exp_year="2025",
+        cvv="123",
+        postal_code="94103",
+        customer_name="Test User",
+        description="Test payment"
+    )
+    
+    return result
+
+
+@router.get("/square/payments")
+def list_square_payments(user=Depends(verify_token), limit: int = 10):
+    """
+    List recent Square payments
+    """
+    result = list_payments(limit=limit)
+    return result
+
+
+@router.post("/square/refund/{payment_id}")
+def refund_square_payment(payment_id: str, user=Depends(verify_token), amount: Optional[float] = None):
+    """
+    Refund a Square payment (full or partial)
+    """
+    amount_cents = int(amount * 100) if amount else None
+    result = refund_payment(
+        payment_id=payment_id,
+        amount_cents=amount_cents,
+        reason="Customer refund request"
+    )
+    return result
