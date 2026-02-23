@@ -1079,6 +1079,12 @@ def generate_ai_prompt(payload: GeneratePromptRequest, user=Depends(verify_token
     
     examples = examples_by_type.get(business_type, examples_by_type["general"])
     
+    # Get values for templates
+    role = role_templates.get(business_type, role_templates["general"])
+    services = payload.services or service_templates.get(business_type, service_templates["general"])
+    goals = goal_templates.get(business_type, goal_templates["general"])
+    required_info = required_info_templates.get(business_type, required_info_templates["general"])
+    
     # Format business info cleanly
     business_info_lines = [f"**Business Name:** {business_name}"]
     if payload.phone_number:
