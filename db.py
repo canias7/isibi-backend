@@ -315,6 +315,10 @@ def init_db():
     add_column_if_missing(conn, "users", "slack_enabled", "BOOLEAN DEFAULT FALSE")
     add_column_if_missing(conn, "agents", "slack_channel", "TEXT")  # Per-agent channel override
     
+    # Microsoft Teams integration columns
+    add_column_if_missing(conn, "users", "teams_webhook_url", "TEXT")
+    add_column_if_missing(conn, "users", "teams_enabled", "BOOLEAN DEFAULT FALSE")
+    
     # Usage tracking migrations
     add_column_if_missing(conn, "call_usage", "revenue_usd", "REAL DEFAULT 0.0")
     add_column_if_missing(conn, "call_usage", "profit_usd", "REAL DEFAULT 0.0")

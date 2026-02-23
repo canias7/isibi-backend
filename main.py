@@ -21,6 +21,7 @@ from twilio.twiml.voice_response import VoiceResponse, Connect, Stream
 from google_calendar import check_availability, create_appointment, list_appointments
 from datetime import datetime
 from slack_integration import notify_new_call, notify_call_ended
+from teams_integration import notify_new_call_teams, notify_call_ended_teams
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -370,6 +371,35 @@ async def handle_media_stream(websocket: WebSocket):
                                         except Exception as e:
                                             logger.warning(f"⚠️ Failed to send Slack notification: {e}")
                                         
+                                        # Send Teams notification for new call
+                                        try:
+                                            conn = get_conn()
+                                            cur = conn.cursor()
+                                            cur.execute(sql("""
+                                                SELECT teams_webhook_url, teams_enabled
+                                                FROM users WHERE id = {PH}
+                                            """), (owner_user_id,))
+                                            teams_row = cur.fetchone()
+                                            conn.close()
+                                            
+                                            if teams_row:
+                                                if isinstance(teams_row, dict):
+                                                    teams_webhook = teams_row.get('teams_webhook_url')
+                                                    teams_enabled = teams_row.get('teams_enabled')
+                                                else:
+                                                    teams_webhook = teams_row[0] if len(teams_row) > 0 else None
+                                                    teams_enabled = teams_row[1] if len(teams_row) > 1 else False
+                                                
+                                                if teams_enabled and teams_webhook:
+                                                    notify_new_call_teams(
+                                                        webhook_url=teams_webhook,
+                                                        agent_name=agent.get('name', 'Unknown Agent'),
+                                                        caller_number=call_from
+                                                    )
+                                                    logger.info("📢 Teams notification sent: New call")
+                                        except Exception as e:
+                                            logger.warning(f"⚠️ Failed to send Teams notification: {e}")
+                                        
                                     except Exception as e:
                                         logger.error(f"❌ Failed to start call tracking: {e}")
                                 
@@ -571,6 +601,54 @@ async def handle_media_stream(websocket: WebSocket):
                                             logger.info("📢 Slack notification sent: Call completed")
                                 except Exception as e:
                                     logger.warning(f"⚠️ Failed to send Slack notification: {e}")
+                                
+                                # Send Teams notification for call end
+                                try:
+                                    from db import get_conn, sql
+                                    conn = get_conn()
+                                    cur = conn.cursor()
+                                    cur.execute(sql("""
+                                        SELECT teams_webhook_url, teams_enabled
+                                        FROM users WHERE id = {PH}
+                                    """), (owner_user_id,))
+                                    teams_row = cur.fetchone()
+                                    conn.close()
+                                    
+                                    if teams_row:
+                                        if isinstance(teams_row, dict):
+                                            teams_webhook = teams_row.get('teams_webhook_url')
+                                            teams_enabled = teams_row.get('teams_enabled')
+                                        else:
+                                            teams_webhook = teams_row[0] if len(teams_row) > 0 else None
+                                            teams_enabled = teams_row[1] if len(teams_row) > 1 else False
+                                        
+                                        if teams_enabled and teams_webhook:
+                                            # Get call_from number
+                                            call_from_number = "Unknown"
+                                            try:
+                                                conn2 = get_conn()
+                                                cur2 = conn2.cursor()
+                                                cur2.execute(sql("""
+                                                    SELECT call_from FROM call_usage 
+                                                    WHERE call_sid = {PH}
+                                                """), (stream_sid,))
+                                                call_row = cur2.fetchone()
+                                                if call_row:
+                                                    call_from_number = call_row[0] if isinstance(call_row, tuple) else call_row.get('call_from')
+                                                conn2.close()
+                                            except:
+                                                pass
+                                            
+                                            notify_call_ended_teams(
+                                                webhook_url=teams_webhook,
+                                                agent_name=agent.get('name', 'Unknown Agent'),
+                                                caller_number=call_from_number,
+                                                duration=duration_seconds,
+                                                cost=credits_to_deduct
+                                            )
+                                            logger.info("📢 Teams notification sent: Call completed")
+                                except Exception as e:
+                                    logger.warning(f"⚠️ Failed to send Teams notification: {e}")
                                     
                             except Exception as e:
                                 logger.error(f"❌ Failed to end call tracking: {e}")
@@ -641,11 +719,17 @@ async def handle_media_stream(websocket: WebSocket):
                             
                             # Execute SMS functions
                             elif func_name == "send_order_confirmation":
+                                logger.info(f"🔔 AI is calling send_order_confirmation tool!")
+                                logger.info(f"📋 Args: {args}")
+                                
                                 from customer_notifications import send_order_confirmation_sms
                                 
                                 # Get business name and phone number
                                 business_name = agent.get('business_name') or agent.get('name', 'Our Business')
                                 agent_phone = agent.get('phone_number')
+                                
+                                logger.info(f"📞 Agent phone: {agent_phone}")
+                                logger.info(f"🏢 Business name: {business_name}")
                                 
                                 result = send_order_confirmation_sms(
                                     customer_phone=args.get("customer_phone"),
@@ -657,13 +741,19 @@ async def handle_media_stream(websocket: WebSocket):
                                     order_number=args.get("order_number"),
                                     from_number=agent_phone
                                 )
-                                logger.info(f"📱 Order confirmation SMS: {result}")
+                                logger.info(f"📱 Order confirmation SMS result: {result}")
                             
                             elif func_name == "send_appointment_confirmation":
+                                logger.info(f"🔔 AI is calling send_appointment_confirmation tool!")
+                                logger.info(f"📋 Args: {args}")
+                                
                                 from customer_notifications import send_appointment_confirmation_sms
                                 
                                 business_name = agent.get('business_name') or agent.get('name', 'Our Business')
                                 agent_phone = agent.get('phone_number')
+                                
+                                logger.info(f"📞 Agent phone: {agent_phone}")
+                                logger.info(f"🏢 Business name: {business_name}")
                                 
                                 result = send_appointment_confirmation_sms(
                                     customer_phone=args.get("customer_phone"),

@@ -1570,3 +1570,161 @@ def disable_slack(user=Depends(verify_token)):
     except Exception as e:
         conn.close()
         return {"success": False, "error": str(e)}
+
+
+# ========== Microsoft Teams Integration ==========
+
+from teams_integration import (
+    notify_new_call_teams,
+    notify_call_ended_teams,
+    notify_appointment_scheduled_teams,
+    notify_order_placed_teams,
+    notify_escalation_teams,
+    notify_low_credits_teams
+)
+
+class TeamsConfigRequest(BaseModel):
+    teams_webhook_url: str
+    teams_enabled: bool = True
+
+@router.post("/teams/configure")
+def configure_teams(payload: TeamsConfigRequest, user=Depends(verify_token)):
+    """
+    Configure Microsoft Teams integration for user
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    # Add columns if they don't exist (migration)
+    from db import add_column_if_missing
+    add_column_if_missing(conn, 'users', 'teams_webhook_url', 'TEXT')
+    add_column_if_missing(conn, 'users', 'teams_enabled', 'BOOLEAN DEFAULT FALSE')
+    
+    cur.execute(sql("""
+        UPDATE users
+        SET teams_webhook_url = {PH},
+            teams_enabled = {PH}
+        WHERE id = {PH}
+    """), (payload.teams_webhook_url, payload.teams_enabled, user_id))
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        "success": True,
+        "message": "Microsoft Teams configured successfully"
+    }
+
+
+@router.get("/teams/status")
+def get_teams_status(user=Depends(verify_token)):
+    """
+    Check if Teams is configured for this user
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    try:
+        cur.execute(sql("""
+            SELECT teams_enabled
+            FROM users
+            WHERE id = {PH}
+        """), (user_id,))
+        
+        row = cur.fetchone()
+    except:
+        # Columns don't exist yet
+        conn.close()
+        return {"configured": False}
+    
+    conn.close()
+    
+    if not row:
+        return {"configured": False}
+    
+    if isinstance(row, dict):
+        enabled = row.get('teams_enabled')
+    else:
+        enabled = row[0] if row else False
+    
+    return {"configured": bool(enabled)}
+
+
+@router.post("/teams/test")
+def test_teams_notification(user=Depends(verify_token)):
+    """
+    Send a test notification to Microsoft Teams
+    """
+    user_id = user["id"]
+    
+    # Get user's Teams webhook
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    try:
+        cur.execute(sql("""
+            SELECT teams_webhook_url
+            FROM users
+            WHERE id = {PH}
+        """), (user_id,))
+        
+        row = cur.fetchone()
+        conn.close()
+        
+        if not row:
+            return {"success": False, "error": "Teams not configured"}
+        
+        if isinstance(row, dict):
+            webhook_url = row.get('teams_webhook_url')
+        else:
+            webhook_url = row[0]
+        
+        if not webhook_url:
+            return {"success": False, "error": "Webhook URL not found"}
+        
+        # Send test notification
+        result = notify_new_call_teams(
+            webhook_url=webhook_url,
+            agent_name="Test Agent",
+            caller_number="+1-555-TEST"
+        )
+        
+        return result
+        
+    except Exception as e:
+        conn.close()
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/teams/disable")
+def disable_teams(user=Depends(verify_token)):
+    """
+    Disable Teams notifications
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    try:
+        cur.execute(sql("""
+            UPDATE users
+            SET teams_enabled = FALSE
+            WHERE id = {PH}
+        """), (user_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        return {"success": True, "message": "Teams notifications disabled"}
+    except Exception as e:
+        conn.close()
+        return {"success": False, "error": str(e)}
