@@ -969,11 +969,16 @@ def generate_ai_prompt(payload: GeneratePromptRequest, user=Depends(verify_token
 1. **Customer's Name**
 2. **Phone Number** (for order confirmation)
 3. **Order Details** (items, quantities, special requests)
-4. **Pickup or Delivery** preference
-5. **Delivery Address** (if applicable)
-6. **Preferred Time** for pickup/delivery
-7. **Payment Method** - Ask: "Will this be cash or card?"
-8. **If Paying by Card:**
+4. **Calculate Total:**
+   - Subtotal (sum of all items)
+   - Tax (calculate based on local tax rate - typically 7-10%)
+   - Delivery fee (if applicable, typically $3-5)
+   - **Final Total** (subtotal + tax + delivery fee)
+5. **Pickup or Delivery** preference
+6. **Delivery Address** (if delivery)
+7. **Preferred Time** for pickup/delivery
+8. **Payment Method** - Ask: "Will this be cash or card?"
+9. **If Paying by Card:**
    - Card Number (16 digits)
    - Expiration Date (MM/YY)
    - CVV (3-digit security code)
@@ -988,7 +993,8 @@ def generate_ai_prompt(payload: GeneratePromptRequest, user=Depends(verify_token
 5. **Special Requests** (outdoor seating, high chair, etc.)
 
 **Important:** 
-- Repeat the order details for confirmation
+- Always break down costs: "Your subtotal is $22.00, plus $1.98 tax and $3.00 delivery, for a total of $26.98"
+- Repeat the complete order details for confirmation
 - Confirm total amount before collecting card info
 - Read back card number for verification
 - Reassure customer about secure payment processing""",
@@ -1011,8 +1017,13 @@ def generate_ai_prompt(payload: GeneratePromptRequest, user=Depends(verify_token
 3. **Email Address** (for order confirmation)
 4. **Product Details** (item name, size, color, quantity)
 5. **Shipping Address** (if applicable)
-6. **Payment Method** - Ask: "How would you like to pay for this?"
-7. **If Paying by Card:**
+6. **Calculate Total:**
+   - Product price
+   - Shipping cost (if applicable)
+   - Tax (calculate based on shipping state tax rate - typically 5-10%)
+   - **Final Total**
+7. **Payment Method** - Ask: "How would you like to pay for this?"
+8. **If Paying by Card:**
    - Card Number (16 digits)
    - Expiration Date (MM/YY)
    - CVV (3-digit security code)
@@ -1025,6 +1036,7 @@ def generate_ai_prompt(payload: GeneratePromptRequest, user=Depends(verify_token
 • Suggest alternatives if item unavailable
 
 **Important:** 
+- Break down costs: "The shoes are $89.99, plus $8.00 shipping and $7.84 tax, for a total of $105.83"
 - Confirm order details and total amount
 - Verify card information by reading it back
 - Provide order number and estimated delivery date
@@ -1068,13 +1080,19 @@ def generate_ai_prompt(payload: GeneratePromptRequest, user=Depends(verify_token
 • Customer wants delivery → Get delivery address, take order, collect payment, confirm delivery time
 • Customer asks about hours or location → Provide accurate information
 
-**Example Order Flow:**
+**Example Order Flow (Pickup):**
 1. Take order: "I'll have a large pepperoni pizza and garlic bread"
-2. Confirm items and calculate total: "That's a large pepperoni pizza and garlic bread. Your total is $24.50"
+2. Calculate and announce total: "That's a large pepperoni pizza at $18.00 and garlic bread at $4.50. Your subtotal is $22.50, plus $2.03 tax, for a total of $24.53"
 3. Ask for payment: "How would you like to pay for this? Cash or card?"
 4. If card, collect: "I'll need your card number, expiration date, CVV, and billing ZIP code"
 5. Verify: "Let me read that back - card ending in 1234, expires 05/27?"
-6. Confirm: "Perfect! Your order will be ready for pickup in 20 minutes" """,
+6. Confirm: "Perfect! Your total of $24.53 has been processed. Your order will be ready for pickup in 20 minutes"
+
+**Example Order Flow (Delivery):**
+1. Take order: "I'd like a large cheese pizza delivered"
+2. Get address: "What's your delivery address?"
+3. Calculate with delivery fee: "That's a large cheese pizza at $16.00. Your subtotal is $16.00, plus $1.44 tax and $4.00 delivery fee, for a total of $21.44"
+4. Collect payment and confirm: "I'll need your card information... Perfect! Your order will be delivered to [address] in 35-45 minutes" """,
         
         "medical": """**Common Interactions:**
 
@@ -1092,12 +1110,12 @@ def generate_ai_prompt(payload: GeneratePromptRequest, user=Depends(verify_token
 
 **Example Order Flow:**
 1. Identify product: "I'd like to order the blue running shoes in size 10"
-2. Confirm availability and price: "Great! We have those in stock. They're $89.99 plus shipping"
+2. Confirm availability and price: "Great! We have those in stock. They're $89.99"
 3. Collect shipping: "What's your shipping address?"
-4. Calculate total: "With standard shipping, your total is $97.99"
+4. Calculate total with tax: "The shoes are $89.99, standard shipping is $8.00, and tax is $7.84 based on your state. Your total is $105.83"
 5. Ask for payment: "How would you like to pay?"
 6. Collect card info: "I'll need your card number, expiration, CVV, and billing ZIP"
-7. Verify and confirm: "Perfect! Your order #12345 will arrive in 5-7 business days" """,
+7. Verify and confirm: "Perfect! Your order #12345 totaling $105.83 has been processed. It will arrive in 5-7 business days" """,
         
         "professional": """**Common Interactions:**
 
@@ -1313,7 +1331,7 @@ Maintain the following communication standards:
 ## 13. CALL ENDING SCRIPTS
 
 **After Taking an Order:**
-> "Perfect! I have your order for [items]. Your total is [amount]. I've processed your payment ending in [last 4 digits]. Your order will be ready for [pickup/delivery] at [time]. You should receive a confirmation [text/email] shortly. Is there anything else I can help you with?"
+> "Perfect! I have your order for [items]. Your subtotal is [subtotal], plus [tax amount] tax [and delivery fee if applicable], for a total of [total]. I've processed your payment ending in [last 4 digits]. Your order will be ready for [pickup/delivery] at [time]. You should receive a confirmation [text/email] shortly. Is there anything else I can help you with?"
 
 
 **After Scheduling an Appointment:**
