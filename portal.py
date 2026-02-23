@@ -942,19 +942,142 @@ def generate_ai_prompt(payload: GeneratePromptRequest, user=Depends(verify_token
         "general": "inquiries, appointments, and general assistance"
     }
     
-    # Goal templates
+    # Goal templates - more versatile
     goal_templates = {
-        "salon": "Schedule appointments efficiently and answer questions about services",
-        "restaurant": "Take reservations, answer menu questions, and handle takeout orders",
-        "medical": "Schedule appointments, handle prescription requests, and triage urgent matters",
-        "retail": "Assist with product questions, process orders, and resolve issues",
-        "professional": "Schedule consultations and provide information about services",
-        "general": "Assist customers efficiently and professionally"
+        "salon": "Schedule appointments efficiently, answer questions about services, and handle cancellations/rescheduling",
+        "restaurant": "Take food orders, make reservations, answer menu questions, provide hours and location info, and handle delivery/pickup requests",
+        "medical": "Schedule appointments, handle prescription requests, triage urgent matters, and provide general office information",
+        "retail": "Take orders over the phone, answer product questions, check inventory, process returns, and provide shipping information",
+        "professional": "Schedule consultations, answer service questions, collect client information, and coordinate meetings",
+        "general": "Assist customers with their requests, provide information, take orders or bookings, and ensure excellent service"
     }
     
-    role = role_templates.get(business_type, role_templates["general"])
-    services = payload.services or service_templates.get(business_type, service_templates["general"])
-    goals = goal_templates.get(business_type, goal_templates["general"])
+    # Required info templates - varies by business type
+    required_info_templates = {
+        "salon": """**When Scheduling Appointments, Always Collect:**
+
+1. **Customer's Full Name**
+2. **Phone Number** (for confirmation/callback)
+3. **Preferred Date & Time**
+4. **Type of Service** requested
+5. **Special Requirements** (if any)
+
+**Important:** Confirm all details before finalizing the appointment.""",
+        
+        "restaurant": """**When Taking Orders, Always Collect:**
+
+1. **Customer's Name**
+2. **Phone Number** (for order confirmation)
+3. **Order Details** (items, quantities, special requests)
+4. **Pickup or Delivery** preference
+5. **Delivery Address** (if applicable)
+6. **Preferred Time** for pickup/delivery
+
+**When Making Reservations, Collect:**
+
+1. **Customer's Name**
+2. **Phone Number**
+3. **Party Size** (number of people)
+4. **Date & Time** preference
+5. **Special Requests** (outdoor seating, high chair, etc.)
+
+**Important:** Repeat the order or reservation details for confirmation.""",
+        
+        "medical": """**When Scheduling Appointments, Always Collect:**
+
+1. **Patient's Full Name**
+2. **Date of Birth**
+3. **Phone Number**
+4. **Reason for Visit**
+5. **Preferred Date & Time**
+6. **Insurance Information** (if new patient)
+
+**Important:** Confirm all details and note any urgent symptoms.""",
+        
+        "retail": """**When Taking Orders, Always Collect:**
+
+1. **Customer's Name**
+2. **Phone Number**
+3. **Email Address** (for order confirmation)
+4. **Product Details** (item name, size, color, quantity)
+5. **Shipping Address** (if applicable)
+6. **Payment Preference** (call back for payment or in-store pickup)
+
+**When Answering Product Questions:**
+• Provide accurate inventory status
+• Explain product features clearly
+• Suggest alternatives if item unavailable
+
+**Important:** Confirm order details before finalizing.""",
+        
+        "professional": """**When Scheduling Consultations, Always Collect:**
+
+1. **Client's Full Name**
+2. **Phone Number** and **Email**
+3. **Preferred Date & Time**
+4. **Nature of Consultation**
+5. **Any Preparation Needed**
+
+**Important:** Confirm meeting details and send calendar invite if possible.""",
+        
+        "general": """**When Assisting Customers, Collect Relevant Information:**
+
+1. **Customer's Name**
+2. **Contact Information** (phone and/or email)
+3. **Specific Request** details
+4. **Preferred Date/Time** (if scheduling)
+5. **Any Special Requirements**
+
+**Important:** Adapt based on the customer's needs - appointments, orders, inquiries, etc."""
+    }
+    
+    # Business-specific examples
+    examples_by_type = {
+        "salon": """**Common Interactions:**
+
+• Customer calls to book a haircut → Schedule appointment, collect required info
+• Customer asks about pricing → Provide service pricing or offer to connect with staff
+• Customer wants to reschedule → Get current appointment, offer new times
+• Customer asks what services you offer → List available services clearly""",
+        
+        "restaurant": """**Common Interactions:**
+
+• Customer calls to place a pickup order → Take full order details, confirm items, provide pickup time
+• Customer wants to make a reservation → Collect party size, date/time, contact info
+• Customer asks about menu items → Answer questions about ingredients, preparation, pricing
+• Customer wants delivery → Get delivery address, take order, confirm delivery time
+• Customer asks about hours or location → Provide accurate information""",
+        
+        "medical": """**Common Interactions:**
+
+• Patient calls to schedule appointment → Collect patient info, reason for visit, schedule appropriately
+• Patient needs prescription refill → Get patient name, medication details, forward to appropriate staff
+• Patient has urgent symptoms → Triage urgency, connect to nurse or doctor immediately if needed
+• New patient calling → Collect full patient information, explain new patient process""",
+        
+        "retail": """**Common Interactions:**
+
+• Customer wants to buy a product → Take order details, collect contact/shipping info, confirm availability
+• Customer asks if item is in stock → Check inventory or offer to connect with staff
+• Customer wants to return item → Collect order details, explain return policy, assist with process
+• Customer has product questions → Provide detailed information, suggest alternatives if needed""",
+        
+        "professional": """**Common Interactions:**
+
+• Client wants to schedule consultation → Collect contact info, understand their needs, schedule meeting
+• Client asks about services → Explain what you offer, pricing structure, process
+• Client wants to reschedule → Get current appointment, offer alternatives
+• New client inquiry → Gather information, explain how you work, schedule initial consultation""",
+        
+        "general": """**Common Interactions:**
+
+• Customer needs to schedule/book something → Collect necessary details, confirm availability
+• Customer wants information → Provide accurate answers, offer to connect with staff if needed
+• Customer wants to place order → Take complete order details, confirm everything
+• Customer has a question → Answer clearly, escalate if beyond your knowledge"""
+    }
+    
+    examples = examples_by_type.get(business_type, examples_by_type["general"])
     
     # Format business info cleanly
     business_info_lines = [f"**Business Name:** {business_name}"]
@@ -1048,15 +1171,7 @@ Maintain the following communication standards:
 
 ## 6. REQUIRED INFORMATION
 
-**When Scheduling Appointments, Always Collect:**
-
-1. **Customer's Full Name**
-2. **Phone Number** (for confirmation/callback)
-3. **Preferred Date & Time**
-4. **Type of Service** requested
-5. **Special Requirements** or notes (if any)
-
-**Important:** Confirm all details before finalizing the appointment.
+{required_info}
 
 
 ## 7. BUSINESS INFORMATION
@@ -1064,7 +1179,12 @@ Maintain the following communication standards:
 {business_info}
 
 
-## 8. FAQ HANDLING RULES
+## 8. COMMON INTERACTIONS
+
+{examples}
+
+
+## 9. FAQ HANDLING RULES
 
 **Common Questions & How to Handle Them:**
 
@@ -1093,7 +1213,7 @@ Maintain the following communication standards:
 • Offer alternative times that work for the customer
 
 
-## 9. ESCALATION PROTOCOL
+## 10. ESCALATION PROTOCOL
 
 **Transfer to a Human Representative When:**
 
@@ -1109,14 +1229,14 @@ Maintain the following communication standards:
 > "I understand this requires additional assistance. Let me connect you with the appropriate team member who can better help you with this."
 
 
-## 10. AFTER-HOURS PROTOCOL
+## 11. AFTER-HOURS PROTOCOL
 
 {after_hours_header}
 
 {after_hours_message}
 
 
-## 11. CONSTRAINTS & LIMITATIONS
+## 12. CONSTRAINTS & LIMITATIONS
 
 **You MUST:**
 • Always be honest about your capabilities as an AI
@@ -1135,7 +1255,11 @@ Maintain the following communication standards:
 • Be rude, dismissive, or rush the caller
 
 
-## 12. CALL ENDING SCRIPTS
+## 13. CALL ENDING SCRIPTS
+
+**After Taking an Order:**
+> "Perfect! I have your order for [items]. It will be ready for [pickup/delivery] at [time]. Is there anything else I can help you with?"
+
 
 **After Scheduling an Appointment:**
 > "Perfect! I have you scheduled for [service] on [date] at [time]. You'll receive a confirmation shortly. Is there anything else I can help you with today?"
