@@ -401,6 +401,12 @@ async def handle_media_stream(websocket: WebSocket):
                                         agent_tools.extend(calendar_tools)
                                         logger.info(f"📅 Google Calendar tools enabled ({len(calendar_tools)} functions)")
                                     
+                                    # Add SMS confirmation tools (always available)
+                                    sms_tools = get_sms_tools()
+                                    if sms_tools:
+                                        agent_tools.extend(sms_tools)
+                                        logger.info(f"📱 SMS confirmation tools enabled ({len(sms_tools)} functions)")
+                                    
                                     # Convert to None if still empty
                                     if not agent_tools:
                                         agent_tools = None
@@ -633,6 +639,44 @@ async def handle_media_stream(websocket: WebSocket):
                                     date=args.get("date")
                                 )
                             
+                            # Execute SMS functions
+                            elif func_name == "send_order_confirmation":
+                                from customer_notifications import send_order_confirmation_sms
+                                
+                                # Get business name and phone number
+                                business_name = agent.get('business_name') or agent.get('name', 'Our Business')
+                                agent_phone = agent.get('phone_number')
+                                
+                                result = send_order_confirmation_sms(
+                                    customer_phone=args.get("customer_phone"),
+                                    business_name=business_name,
+                                    order_items=args.get("order_items"),
+                                    total=args.get("total"),
+                                    pickup_time=args.get("pickup_time"),
+                                    delivery_address=args.get("delivery_address"),
+                                    order_number=args.get("order_number"),
+                                    from_number=agent_phone
+                                )
+                                logger.info(f"📱 Order confirmation SMS: {result}")
+                            
+                            elif func_name == "send_appointment_confirmation":
+                                from customer_notifications import send_appointment_confirmation_sms
+                                
+                                business_name = agent.get('business_name') or agent.get('name', 'Our Business')
+                                agent_phone = agent.get('phone_number')
+                                
+                                result = send_appointment_confirmation_sms(
+                                    customer_phone=args.get("customer_phone"),
+                                    business_name=business_name,
+                                    customer_name=args.get("customer_name"),
+                                    service=args.get("service"),
+                                    date=args.get("date"),
+                                    time=args.get("time"),
+                                    confirmation_number=args.get("confirmation_number"),
+                                    from_number=agent_phone
+                                )
+                                logger.info(f"📱 Appointment confirmation SMS: {result}")
+                            
                             if result:
                                 # Send function result back to OpenAI
                                 await openai_ws.send(json.dumps({
@@ -822,3 +866,82 @@ async def initialize_session(openai_ws, instructions: str, voice: str | None = N
     await openai_ws.send(json.dumps(session_update))
     
     
+
+
+def get_sms_tools() -> list:
+    """
+    Return OpenAI function definitions for sending customer SMS confirmations.
+    Always available (uses Twilio).
+    """
+    return [
+        {
+            "type": "function",
+            "name": "send_order_confirmation",
+            "description": "Send SMS order confirmation to customer after they place an order and provide payment. ALWAYS use this after successfully taking an order.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "customer_phone": {
+                        "type": "string",
+                        "description": "Customer's phone number in E.164 format (e.g., +17045551234)"
+                    },
+                    "order_items": {
+                        "type": "string",
+                        "description": "Description of items ordered (e.g., '2 Large Pepperoni Pizzas, Garlic Bread')"
+                    },
+                    "total": {
+                        "type": "number",
+                        "description": "Total amount charged including tax and fees"
+                    },
+                    "pickup_time": {
+                        "type": "string",
+                        "description": "When order will be ready for pickup (e.g., '6:30 PM')"
+                    },
+                    "delivery_address": {
+                        "type": "string",
+                        "description": "Delivery address if applicable"
+                    },
+                    "order_number": {
+                        "type": "string",
+                        "description": "Order confirmation number if available"
+                    }
+                },
+                "required": ["customer_phone", "order_items", "total"]
+            }
+        },
+        {
+            "type": "function",
+            "name": "send_appointment_confirmation",
+            "description": "Send SMS appointment confirmation to customer after successfully booking an appointment. ALWAYS use this after booking an appointment.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "customer_phone": {
+                        "type": "string",
+                        "description": "Customer's phone number in E.164 format"
+                    },
+                    "customer_name": {
+                        "type": "string",
+                        "description": "Customer's full name"
+                    },
+                    "service": {
+                        "type": "string",
+                        "description": "Type of service/appointment (e.g., 'Haircut', 'Dental Cleaning')"
+                    },
+                    "date": {
+                        "type": "string",
+                        "description": "Appointment date (e.g., 'February 25, 2026')"
+                    },
+                    "time": {
+                        "type": "string",
+                        "description": "Appointment time (e.g., '2:00 PM')"
+                    },
+                    "confirmation_number": {
+                        "type": "string",
+                        "description": "Confirmation number if available"
+                    }
+                },
+                "required": ["customer_phone", "customer_name", "service", "date", "time"]
+            }
+        }
+    ]
