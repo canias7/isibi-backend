@@ -329,6 +329,10 @@ def init_db():
     add_column_if_missing(conn, "users", "elevenlabs_enabled", "BOOLEAN DEFAULT FALSE")
     add_column_if_missing(conn, "agents", "elevenlabs_voice_id", "TEXT")  # Per-agent voice selection
     
+    # Voice Activity Detection (VAD) settings for noise suppression
+    add_column_if_missing(conn, "agents", "vad_threshold", "REAL")  # 0.0-1.0, higher = less sensitive
+    add_column_if_missing(conn, "agents", "vad_silence_duration_ms", "INTEGER")  # Milliseconds of silence before ending turn
+    
     # Usage tracking migrations
     add_column_if_missing(conn, "call_usage", "revenue_usd", "REAL DEFAULT 0.0")
     add_column_if_missing(conn, "call_usage", "profit_usd", "REAL DEFAULT 0.0")
@@ -761,12 +765,12 @@ def end_call_tracking(call_sid: str, duration_seconds: int, cost_usd: float, rev
     # Use provided cost_usd or calculated cost
     final_cost_usd = cost_usd if cost_usd > 0 else total_component_cost
     
-    # Calculate CUSTOMER revenue (what you charge them) - 5x markup
-    revenue_input_tokens = cost_input_tokens * 5
-    revenue_output_tokens = cost_output_tokens * 5
-    revenue_input_audio = cost_input_audio * 5
-    revenue_output_audio = cost_output_audio * 5
-    revenue_twilio_phone = cost_twilio_phone * 5
+    # Calculate CUSTOMER revenue (what you charge them) - 2x markup
+    revenue_input_tokens = cost_input_tokens * 2
+    revenue_output_tokens = cost_output_tokens * 2
+    revenue_input_audio = cost_input_audio * 2
+    revenue_output_audio = cost_output_audio * 2
+    revenue_twilio_phone = cost_twilio_phone * 2
     
     # Calculate total revenue
     total_component_revenue = (revenue_input_tokens + revenue_output_tokens + 
@@ -936,8 +940,8 @@ def calculate_call_cost(duration_seconds: int, cost_per_minute: float = 0.05) ->
     return round(minutes * cost_per_minute, 4)
 
 
-def calculate_call_revenue(duration_seconds: int, revenue_per_minute: float = 0.25) -> float:
-    """Calculate revenue to charge customer (5x your cost)"""
+def calculate_call_revenue(duration_seconds: int, revenue_per_minute: float = 0.10) -> float:
+    """Calculate revenue to charge customer (2x your cost)"""
     minutes = duration_seconds / 60.0
     return round(minutes * revenue_per_minute, 4)
 

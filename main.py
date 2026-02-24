@@ -538,8 +538,8 @@ async def handle_media_stream(websocket: WebSocket):
                                 # YOUR COST: What you pay (e.g., $0.05/min)
                                 cost = calculate_call_cost(duration_seconds, cost_per_minute=0.05)
                                 
-                                # CUSTOMER CHARGE: 5x your cost = $0.25/min (THIS IS IN CREDITS)
-                                credits_to_deduct = calculate_call_revenue(duration_seconds, revenue_per_minute=0.25)
+                                # CUSTOMER CHARGE: 2x your cost = $0.10/min (THIS IS IN CREDITS)
+                                credits_to_deduct = calculate_call_revenue(duration_seconds, revenue_per_minute=0.10)
                                 
                                 # PROFIT: What you make
                                 profit = credits_to_deduct - cost

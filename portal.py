@@ -81,6 +81,8 @@ class AgentOut(BaseModel):
     system_prompt: Optional[str] = None
     provider: Optional[str] = None
     voice: Optional[str] = None
+    voice_provider: Optional[str] = None  # 'openai' or 'elevenlabs'
+    elevenlabs_voice_id: Optional[str] = None
     tools: Optional[Dict[str, Any]] = None
     google_calendar_connected: Optional[bool] = None
     created_at: Optional[str] = None
@@ -861,8 +863,8 @@ def get_call_details(call_id: int, user=Depends(verify_token)):
     ai_provider = call.get("ai_provider") or "OpenAI"
     
     # Calculate breakdown
-    # Twilio phone cost: $0.0085/min (your cost) * 5 (markup) = $0.0425/min customer pays
-    twilio_cost = duration_minutes * 0.0425
+    # Twilio phone cost: $0.0085/min (your cost) * 2 (markup) = $0.017/min customer pays
+    twilio_cost = duration_minutes * 0.017
     
     # OpenAI cost: remainder
     openai_cost = total_revenue - twilio_cost
@@ -2073,4 +2075,112 @@ def set_agent_voice(agent_id: int, voice_id: str, user=Depends(verify_token)):
         "success": True,
         "message": "Voice updated",
         "voice_id": voice_id
+    }
+
+
+class VADSettingsRequest(BaseModel):
+    threshold: Optional[float] = 0.7  # 0.0-1.0
+    silence_duration_ms: Optional[int] = 800  # milliseconds
+
+@router.put("/agents/{agent_id}/vad-settings")
+def update_agent_vad_settings(agent_id: int, payload: VADSettingsRequest, user=Depends(verify_token)):
+    """
+    Update Voice Activity Detection settings for noise suppression
+    
+    threshold: 0.5 (sensitive) to 0.9 (very strict)
+    silence_duration_ms: 500-1500ms (how long to wait before ending turn)
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    # Verify agent belongs to user
+    cur.execute(sql("""
+        SELECT id FROM agents 
+        WHERE id = {PH} AND owner_user_id = {PH}
+    """), (agent_id, user_id))
+    
+    if not cur.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    # Add columns if they don't exist
+    from db import add_column_if_missing
+    add_column_if_missing(conn, 'agents', 'vad_threshold', 'REAL')
+    add_column_if_missing(conn, 'agents', 'vad_silence_duration_ms', 'INTEGER')
+    
+    # Validate ranges
+    threshold = max(0.0, min(1.0, payload.threshold))
+    silence_ms = max(200, min(2000, payload.silence_duration_ms))
+    
+    # Update settings
+    cur.execute(sql("""
+        UPDATE agents
+        SET vad_threshold = {PH},
+            vad_silence_duration_ms = {PH}
+        WHERE id = {PH}
+    """), (threshold, silence_ms, agent_id))
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        "success": True,
+        "message": "VAD settings updated",
+        "threshold": threshold,
+        "silence_duration_ms": silence_ms,
+        "note": "Higher threshold = less sensitive to noise. Longer silence = fewer interruptions."
+    }
+
+
+@router.get("/agents/{agent_id}/vad-settings")
+def get_agent_vad_settings(agent_id: int, user=Depends(verify_token)):
+    """
+    Get current VAD settings for agent
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    cur.execute(sql("""
+        SELECT vad_threshold, vad_silence_duration_ms
+        FROM agents 
+        WHERE id = {PH} AND owner_user_id = {PH}
+    """), (agent_id, user_id))
+    
+    row = cur.fetchone()
+    conn.close()
+    
+    if not row:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    if isinstance(row, dict):
+        threshold = row.get('vad_threshold') or 0.7
+        silence_ms = row.get('vad_silence_duration_ms') or 800
+    else:
+        threshold = row[0] if row[0] else 0.7
+        silence_ms = row[1] if row[1] else 800
+    
+    # Provide recommendations based on current settings
+    if threshold < 0.6:
+        noise_level = "Quiet environment (very sensitive)"
+    elif threshold < 0.75:
+        noise_level = "Normal environment (balanced)"
+    else:
+        noise_level = "Noisy environment (strict filtering)"
+    
+    return {
+        "threshold": threshold,
+        "silence_duration_ms": silence_ms,
+        "noise_level": noise_level,
+        "recommendations": {
+            "quiet_office": {"threshold": 0.5, "silence_duration_ms": 600},
+            "normal": {"threshold": 0.7, "silence_duration_ms": 800},
+            "noisy_background": {"threshold": 0.8, "silence_duration_ms": 1000},
+            "very_noisy": {"threshold": 0.85, "silence_duration_ms": 1200}
+        }
     }
