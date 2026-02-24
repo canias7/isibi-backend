@@ -5,13 +5,22 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 
-# Email configuration
+# Email configuration - Try SendGrid first, fallback to SMTP
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+# Try importing SendGrid
+try:
+    from sendgrid import SendGridAPIClient
+    from sendgrid.helpers.mail import Mail
+    SENDGRID_AVAILABLE = True
+except ImportError:
+    SENDGRID_AVAILABLE = False
 
 
 def generate_reset_token():
@@ -30,10 +39,15 @@ def send_reset_email(email: str, reset_token: str) -> dict:
     Returns:
         {"success": bool, "error": str (if failed)}
     """
+    # Try SendGrid first (works on Render without network access)
+    if SENDGRID_AVAILABLE and SENDGRID_API_KEY:
+        return send_reset_email_sendgrid(email, reset_token)
+    
+    # Fallback to SMTP
     if not SMTP_USER or not SMTP_PASSWORD:
         return {
             "success": False,
-            "error": "Email not configured. Set SMTP_USER and SMTP_PASSWORD environment variables."
+            "error": "Email not configured. Set SENDGRID_API_KEY or SMTP credentials."
         }
     
     try:
@@ -63,7 +77,58 @@ If you didn't request this, please ignore this email.
         """
         
         # HTML version
-        html = f"""
+        html = get_reset_email_html(reset_link)
+        
+        # Attach both versions
+        part1 = MIMEText(text, 'plain')
+        part2 = MIMEText(html, 'html')
+        msg.attach(part1)
+        msg.attach(part2)
+        
+        # Send email
+        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
+        server.starttls()
+        server.login(SMTP_USER, SMTP_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        
+        print(f"✅ Password reset email sent to {email}")
+        
+        return {"success": True}
+    
+    except Exception as e:
+        print(f"❌ Failed to send email via SMTP: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def send_reset_email_sendgrid(email: str, reset_token: str) -> dict:
+    """
+    Send password reset email using SendGrid API
+    """
+    try:
+        reset_link = f"{FRONTEND_URL}/reset-password?token={reset_token}"
+        
+        message = Mail(
+            from_email=SMTP_FROM or 'noreply@isibi.com',
+            to_emails=email,
+            subject='Password Reset Request - ISIBI Voice AI',
+            html_content=get_reset_email_html(reset_link)
+        )
+        
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        response = sg.send(message)
+        
+        print(f"✅ Password reset email sent to {email} via SendGrid")
+        return {"success": True}
+    
+    except Exception as e:
+        print(f"❌ Failed to send email via SendGrid: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def get_reset_email_html(reset_link: str) -> str:
+    """Get HTML template for reset email"""
+    return f"""
 <!DOCTYPE html>
 <html>
 <head>
@@ -100,28 +165,7 @@ If you didn't request this, please ignore this email.
     </div>
 </body>
 </html>
-        """
-        
-        # Attach both versions
-        part1 = MIMEText(text, 'plain')
-        part2 = MIMEText(html, 'html')
-        msg.attach(part1)
-        msg.attach(part2)
-        
-        # Send email
-        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        
-        print(f"✅ Password reset email sent to {email}")
-        
-        return {"success": True}
-    
-    except Exception as e:
-        print(f"❌ Failed to send email: {e}")
-        return {"success": False, "error": str(e)}
+"""
 
 
 def create_password_reset_request(email: str) -> dict:
