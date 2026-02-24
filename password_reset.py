@@ -351,7 +351,7 @@ def reset_password_with_token(token: str, new_password: str) -> dict:
         # Update password and clear reset token
         cur.execute(sql("""
             UPDATE users
-            SET password = {PH},
+            SET password_hash = {PH},
                 reset_token = NULL,
                 reset_token_expires = NULL
             WHERE id = {PH}
