@@ -2184,3 +2184,128 @@ def get_agent_vad_settings(agent_id: int, user=Depends(verify_token)):
             "very_noisy": {"threshold": 0.85, "silence_duration_ms": 1200}
         }
     }
+
+
+# ========== Auto-Recharge ==========
+
+from auto_recharge import check_and_auto_recharge, save_payment_method_for_auto_recharge
+
+class AutoRechargeConfigRequest(BaseModel):
+    enabled: bool
+    amount: Optional[float] = 10.00  # Default $10
+    payment_method_id: Optional[str] = None  # Stripe payment method ID
+
+@router.post("/credits/auto-recharge/configure")
+def configure_auto_recharge(payload: AutoRechargeConfigRequest, user=Depends(verify_token)):
+    """
+    Enable/disable auto-recharge and set amount
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql, add_column_if_missing
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    # Add columns if they don't exist
+    add_column_if_missing(conn, 'users', 'auto_recharge_enabled', 'BOOLEAN DEFAULT FALSE')
+    add_column_if_missing(conn, 'users', 'auto_recharge_amount', 'REAL DEFAULT 10.0')
+    add_column_if_missing(conn, 'users', 'stripe_customer_id', 'TEXT')
+    add_column_if_missing(conn, 'users', 'stripe_payment_method_id', 'TEXT')
+    
+    # If enabling and payment method provided, save it
+    if payload.enabled and payload.payment_method_id:
+        result = save_payment_method_for_auto_recharge(user_id, payload.payment_method_id)
+        if not result["success"]:
+            conn.close()
+            return {"success": False, "error": result["error"]}
+    
+    # Update settings
+    cur.execute(sql("""
+        UPDATE users
+        SET auto_recharge_enabled = {PH},
+            auto_recharge_amount = {PH}
+        WHERE id = {PH}
+    """), (payload.enabled, payload.amount, user_id))
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        "success": True,
+        "message": "Auto-recharge configured",
+        "enabled": payload.enabled,
+        "amount": payload.amount,
+        "threshold": 2.00
+    }
+
+
+@router.get("/credits/auto-recharge/status")
+def get_auto_recharge_status(user=Depends(verify_token)):
+    """
+    Get auto-recharge settings
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    try:
+        cur.execute(sql("""
+            SELECT auto_recharge_enabled, auto_recharge_amount, stripe_payment_method_id
+            FROM users
+            WHERE id = {PH}
+        """), (user_id,))
+        
+        row = cur.fetchone()
+    except:
+        conn.close()
+        return {
+            "enabled": False,
+            "amount": 10.00,
+            "threshold": 2.00,
+            "has_payment_method": False
+        }
+    
+    conn.close()
+    
+    if not row:
+        return {
+            "enabled": False,
+            "amount": 10.00,
+            "threshold": 2.00,
+            "has_payment_method": False
+        }
+    
+    if isinstance(row, dict):
+        enabled = row.get('auto_recharge_enabled') or False
+        amount = row.get('auto_recharge_amount') or 10.00
+        has_pm = bool(row.get('stripe_payment_method_id'))
+    else:
+        enabled = row[0] if len(row) > 0 else False
+        amount = row[1] if len(row) > 1 else 10.00
+        has_pm = bool(row[2]) if len(row) > 2 else False
+    
+    return {
+        "enabled": enabled,
+        "amount": amount,
+        "threshold": 2.00,
+        "has_payment_method": has_pm
+    }
+
+
+@router.post("/credits/auto-recharge/test")
+def test_auto_recharge(user=Depends(verify_token)):
+    """
+    Test auto-recharge (for testing only - manually triggers)
+    """
+    user_id = user["id"]
+    
+    # Get current balance
+    from db import get_user_credits
+    credits = get_user_credits(user_id)
+    
+    # Trigger auto-recharge check
+    result = check_and_auto_recharge(user_id, credits["balance"])
+    
+    return result

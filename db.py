@@ -333,6 +333,12 @@ def init_db():
     add_column_if_missing(conn, "agents", "vad_threshold", "REAL")  # 0.0-1.0, higher = less sensitive
     add_column_if_missing(conn, "agents", "vad_silence_duration_ms", "INTEGER")  # Milliseconds of silence before ending turn
     
+    # Auto-recharge settings
+    add_column_if_missing(conn, "users", "auto_recharge_enabled", "BOOLEAN DEFAULT FALSE")
+    add_column_if_missing(conn, "users", "auto_recharge_amount", "REAL DEFAULT 10.0")
+    add_column_if_missing(conn, "users", "stripe_customer_id", "TEXT")
+    add_column_if_missing(conn, "users", "stripe_payment_method_id", "TEXT")
+    
     # Usage tracking migrations
     add_column_if_missing(conn, "call_usage", "revenue_usd", "REAL DEFAULT 0.0")
     add_column_if_missing(conn, "call_usage", "profit_usd", "REAL DEFAULT 0.0")
@@ -1112,6 +1118,21 @@ def deduct_credits(user_id: int, amount: float, call_id: int = None, description
     conn.commit()
     print(f"✅ Transaction committed to database")
     conn.close()
+    
+    # Check if auto-recharge should trigger
+    if new_balance < 2.00:
+        print(f"⚠️ Low balance detected: ${new_balance:.2f} - checking auto-recharge")
+        try:
+            from auto_recharge import check_and_auto_recharge
+            recharge_result = check_and_auto_recharge(user_id, new_balance)
+            
+            if recharge_result.get("success"):
+                print(f"💳 Auto-recharge successful: Added ${recharge_result.get('amount_added'):.2f}")
+                new_balance = recharge_result.get("new_balance")
+            elif recharge_result.get("triggered"):
+                print(f"❌ Auto-recharge failed: {recharge_result.get('error')}")
+        except Exception as e:
+            print(f"⚠️ Auto-recharge check failed: {e}")
     
     return {"success": True, "balance": new_balance, "deducted": amount}
 
