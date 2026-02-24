@@ -1001,9 +1001,9 @@ async def initialize_session(openai_ws, instructions: str, voice: str | None = N
             "instructions": instructions,
             "turn_detection": {
                 "type": "server_vad",
-                "threshold": 0.5,  # Sensitivity: 0.0-1.0 (higher = less sensitive)
+                "threshold": 0.7,  # Higher = less sensitive to background noise (0.5 default, 0.7-0.8 for noisy environments)
                 "prefix_padding_ms": 300,  # Audio to include before speech starts
-                "silence_duration_ms": 1000  # Wait 1 second of silence before responding (default is 500ms)
+                "silence_duration_ms": 800  # Wait longer before considering speech finished (reduces false interruptions)
             },
         },
     }
