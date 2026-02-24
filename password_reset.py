@@ -43,12 +43,17 @@ def send_reset_email(email: str, reset_token: str) -> dict:
     if SENDGRID_AVAILABLE and SENDGRID_API_KEY:
         return send_reset_email_sendgrid(email, reset_token)
     
-    # Fallback to SMTP
-    if not SMTP_USER or not SMTP_PASSWORD:
+    # Check if we have any email method configured
+    if not SENDGRID_API_KEY and (not SMTP_USER or not SMTP_PASSWORD):
+        error_msg = "Email not configured. Please set SENDGRID_API_KEY environment variable in Render."
+        print(f"❌ {error_msg}")
         return {
             "success": False,
-            "error": "Email not configured. Set SENDGRID_API_KEY or SMTP credentials."
+            "error": error_msg
         }
+    
+    # Try SMTP (will fail on Render due to network restrictions)
+    print("⚠️ SendGrid not available, attempting SMTP (may fail on Render due to network restrictions)...")
     
     try:
         # Create reset link
@@ -97,8 +102,16 @@ If you didn't request this, please ignore this email.
         return {"success": True}
     
     except Exception as e:
-        print(f"❌ Failed to send email via SMTP: {e}")
-        return {"success": False, "error": str(e)}
+        error_msg = str(e)
+        
+        # Provide helpful error message for network issues
+        if "Network is unreachable" in error_msg or "Errno 101" in error_msg:
+            error_msg = "SMTP blocked by Render. Please use SendGrid instead. Set SENDGRID_API_KEY in environment variables."
+            print(f"❌ {error_msg}")
+        else:
+            print(f"❌ Failed to send email via SMTP: {e}")
+        
+        return {"success": False, "error": error_msg}
 
 
 def send_reset_email_sendgrid(email: str, reset_token: str) -> dict:
