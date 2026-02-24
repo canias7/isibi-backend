@@ -2309,3 +2309,165 @@ def test_auto_recharge(user=Depends(verify_token)):
     result = check_and_auto_recharge(user_id, credits["balance"])
     
     return result
+
+
+# ========== Shopify Integration ==========
+
+from shopify_integration import (
+    get_products, search_products, create_order, 
+    get_product_variants, check_inventory, get_order_status
+)
+
+class ShopifyConfigRequest(BaseModel):
+    shop_name: str  # e.g., "my-store" (without .myshopify.com)
+    access_token: str
+
+@router.post("/shopify/configure")
+def configure_shopify(payload: ShopifyConfigRequest, user=Depends(verify_token)):
+    """
+    Configure Shopify integration
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql, add_column_if_missing
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    # Add columns
+    add_column_if_missing(conn, 'users', 'shopify_shop_name', 'TEXT')
+    add_column_if_missing(conn, 'users', 'shopify_access_token', 'TEXT')
+    add_column_if_missing(conn, 'users', 'shopify_enabled', 'BOOLEAN DEFAULT FALSE')
+    
+    # Test connection by fetching products
+    test_result = get_products(payload.shop_name, payload.access_token, limit=1)
+    
+    if not test_result.get("success"):
+        conn.close()
+        return {
+            "success": False,
+            "error": f"Failed to connect to Shopify: {test_result.get('error')}"
+        }
+    
+    # Save credentials
+    cur.execute(sql("""
+        UPDATE users
+        SET shopify_shop_name = {PH},
+            shopify_access_token = {PH},
+            shopify_enabled = TRUE
+        WHERE id = {PH}
+    """), (payload.shop_name, payload.access_token, user_id))
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        "success": True,
+        "message": "Shopify connected successfully",
+        "shop_name": payload.shop_name,
+        "product_count": test_result.get("count", 0)
+    }
+
+
+@router.get("/shopify/status")
+def get_shopify_status(user=Depends(verify_token)):
+    """
+    Check if Shopify is configured
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    try:
+        cur.execute(sql("""
+            SELECT shopify_enabled, shopify_shop_name
+            FROM users
+            WHERE id = {PH}
+        """), (user_id,))
+        
+        row = cur.fetchone()
+    except:
+        conn.close()
+        return {"configured": False}
+    
+    conn.close()
+    
+    if not row:
+        return {"configured": False}
+    
+    if isinstance(row, dict):
+        enabled = row.get('shopify_enabled')
+        shop_name = row.get('shopify_shop_name')
+    else:
+        enabled = row[0] if row else False
+        shop_name = row[1] if len(row) > 1 else None
+    
+    return {
+        "configured": bool(enabled),
+        "shop_name": shop_name
+    }
+
+
+@router.get("/shopify/products")
+def list_shopify_products(user=Depends(verify_token), limit: int = 50):
+    """
+    Get products from Shopify store
+    """
+    user_id = user["id"]
+    
+    # Get Shopify credentials
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    cur.execute(sql("""
+        SELECT shopify_shop_name, shopify_access_token
+        FROM users WHERE id = {PH}
+    """), (user_id,))
+    
+    row = cur.fetchone()
+    conn.close()
+    
+    if not row:
+        return {"success": False, "error": "Shopify not configured"}
+    
+    if isinstance(row, dict):
+        shop_name = row.get('shopify_shop_name')
+        access_token = row.get('shopify_access_token')
+    else:
+        shop_name = row[0]
+        access_token = row[1]
+    
+    if not shop_name or not access_token:
+        return {"success": False, "error": "Shopify credentials missing"}
+    
+    result = get_products(shop_name, access_token, limit)
+    return result
+
+
+@router.post("/shopify/disable")
+def disable_shopify(user=Depends(verify_token)):
+    """
+    Disable Shopify integration
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    try:
+        cur.execute(sql("""
+            UPDATE users
+            SET shopify_enabled = FALSE
+            WHERE id = {PH}
+        """), (user_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        return {"success": True, "message": "Shopify disabled"}
+    except Exception as e:
+        conn.close()
+        return {"success": False, "error": str(e)}

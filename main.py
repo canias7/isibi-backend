@@ -450,6 +450,12 @@ async def handle_media_stream(websocket: WebSocket):
                                         agent_tools.extend(square_tools)
                                         logger.info(f"💳 Square payment tool enabled")
                                     
+                                    # Add Shopify tools (if user has Shopify configured)
+                                    shopify_tools = get_shopify_tools()
+                                    if shopify_tools:
+                                        agent_tools.extend(shopify_tools)
+                                        logger.info(f"🛍️ Shopify tools enabled ({len(shopify_tools)} functions)")
+                                    
                                     # Convert to None if still empty
                                     if not agent_tools:
                                         agent_tools = None
@@ -825,6 +831,106 @@ async def handle_media_stream(websocket: WebSocket):
                                 else:
                                     logger.error(f"❌ Payment failed: {result.get('error')}")
                             
+                            # Shopify product search
+                            elif func_name == "search_shopify_products":
+                                logger.info(f"🛍️ Searching Shopify products: {args.get('query')}")
+                                
+                                from shopify_integration import search_products
+                                
+                                # Get user's Shopify credentials
+                                owner_user_id = agent.get('owner_user_id')
+                                conn_temp = get_conn()
+                                cur_temp = conn_temp.cursor()
+                                cur_temp.execute(sql("""
+                                    SELECT shopify_shop_name, shopify_access_token
+                                    FROM users WHERE id = {PH}
+                                """), (owner_user_id,))
+                                shop_row = cur_temp.fetchone()
+                                conn_temp.close()
+                                
+                                if shop_row:
+                                    if isinstance(shop_row, dict):
+                                        shop_name = shop_row.get('shopify_shop_name')
+                                        access_token = shop_row.get('shopify_access_token')
+                                    else:
+                                        shop_name = shop_row[0]
+                                        access_token = shop_row[1]
+                                    
+                                    result = search_products(shop_name, access_token, args.get('query'))
+                                    logger.info(f"📦 Found {len(result.get('products', []))} products")
+                                else:
+                                    result = {"success": False, "error": "Shopify not configured"}
+                            
+                            # Shopify inventory check
+                            elif func_name == "check_shopify_inventory":
+                                logger.info(f"📊 Checking inventory for variant {args.get('variant_id')}")
+                                
+                                from shopify_integration import check_inventory
+                                
+                                owner_user_id = agent.get('owner_user_id')
+                                conn_temp = get_conn()
+                                cur_temp = conn_temp.cursor()
+                                cur_temp.execute(sql("""
+                                    SELECT shopify_shop_name, shopify_access_token
+                                    FROM users WHERE id = {PH}
+                                """), (owner_user_id,))
+                                shop_row = cur_temp.fetchone()
+                                conn_temp.close()
+                                
+                                if shop_row:
+                                    if isinstance(shop_row, dict):
+                                        shop_name = shop_row.get('shopify_shop_name')
+                                        access_token = shop_row.get('shopify_access_token')
+                                    else:
+                                        shop_name = shop_row[0]
+                                        access_token = shop_row[1]
+                                    
+                                    result = check_inventory(shop_name, access_token, args.get('variant_id'))
+                                else:
+                                    result = {"success": False, "error": "Shopify not configured"}
+                            
+                            # Shopify order creation
+                            elif func_name == "create_shopify_order":
+                                logger.info(f"🛒 Creating Shopify order for {args.get('customer_name')}")
+                                
+                                from shopify_integration import create_order
+                                
+                                owner_user_id = agent.get('owner_user_id')
+                                conn_temp = get_conn()
+                                cur_temp = conn_temp.cursor()
+                                cur_temp.execute(sql("""
+                                    SELECT shopify_shop_name, shopify_access_token
+                                    FROM users WHERE id = {PH}
+                                """), (owner_user_id,))
+                                shop_row = cur_temp.fetchone()
+                                conn_temp.close()
+                                
+                                if shop_row:
+                                    if isinstance(shop_row, dict):
+                                        shop_name = shop_row.get('shopify_shop_name')
+                                        access_token = shop_row.get('shopify_access_token')
+                                    else:
+                                        shop_name = shop_row[0]
+                                        access_token = shop_row[1]
+                                    
+                                    result = create_order(
+                                        shop_name=shop_name,
+                                        access_token=access_token,
+                                        customer_email=args.get('customer_email'),
+                                        customer_name=args.get('customer_name'),
+                                        customer_phone=args.get('customer_phone'),
+                                        line_items=args.get('line_items'),
+                                        shipping_address=args.get('shipping_address'),
+                                        financial_status="paid"  # Assuming payment already processed
+                                    )
+                                    
+                                    if result.get("success"):
+                                        logger.info(f"✅ Order created! Order #{result.get('order_number')}")
+                                    else:
+                                        logger.error(f"❌ Order creation failed: {result.get('error')}")
+                                else:
+                                    result = {"success": False, "error": "Shopify not configured"}
+                            
                             if result:
                                 # Send function result back to OpenAI
                                 await openai_ws.send(json.dumps({
@@ -1171,6 +1277,91 @@ def get_square_payment_tool() -> list:
                     }
                 },
                 "required": ["amount", "card_number", "exp_month", "exp_year", "cvv", "postal_code"]
+            }
+        }
+    ]
+
+
+def get_shopify_tools() -> list:
+    """
+    Return OpenAI function definitions for Shopify product operations.
+    AI can search products, check inventory, and create orders.
+    """
+    return [
+        {
+            "type": "function",
+            "name": "search_shopify_products",
+            "description": "Search for products in the Shopify store by name. Use this when customer asks about a product.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Product name or search term (e.g., 't-shirt', 'blue shoes')"
+                    }
+                },
+                "required": ["query"]
+            }
+        },
+        {
+            "type": "function",
+            "name": "check_shopify_inventory",
+            "description": "Check if a product variant is in stock and get the price.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "variant_id": {
+                        "type": "integer",
+                        "description": "Shopify variant ID from search results"
+                    }
+                },
+                "required": ["variant_id"]
+            }
+        },
+        {
+            "type": "function",
+            "name": "create_shopify_order",
+            "description": "Create an order in Shopify after customer confirms purchase and provides payment.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "customer_name": {
+                        "type": "string",
+                        "description": "Customer's full name"
+                    },
+                    "customer_email": {
+                        "type": "string",
+                        "description": "Customer's email address"
+                    },
+                    "customer_phone": {
+                        "type": "string",
+                        "description": "Customer's phone number"
+                    },
+                    "line_items": {
+                        "type": "array",
+                        "description": "Products being ordered",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "variant_id": {"type": "integer"},
+                                "quantity": {"type": "integer"},
+                                "price": {"type": "string"}
+                            }
+                        }
+                    },
+                    "shipping_address": {
+                        "type": "object",
+                        "description": "Shipping address (if applicable)",
+                        "properties": {
+                            "address1": {"type": "string"},
+                            "city": {"type": "string"},
+                            "province": {"type": "string"},
+                            "zip": {"type": "string"},
+                            "country": {"type": "string"}
+                        }
+                    }
+                },
+                "required": ["customer_name", "customer_email", "customer_phone", "line_items"]
             }
         }
     ]

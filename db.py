@@ -339,6 +339,11 @@ def init_db():
     add_column_if_missing(conn, "users", "stripe_customer_id", "TEXT")
     add_column_if_missing(conn, "users", "stripe_payment_method_id", "TEXT")
     
+    # Shopify integration
+    add_column_if_missing(conn, "users", "shopify_shop_name", "TEXT")
+    add_column_if_missing(conn, "users", "shopify_access_token", "TEXT")
+    add_column_if_missing(conn, "users", "shopify_enabled", "BOOLEAN DEFAULT FALSE")
+    
     # Usage tracking migrations
     add_column_if_missing(conn, "call_usage", "revenue_usd", "REAL DEFAULT 0.0")
     add_column_if_missing(conn, "call_usage", "profit_usd", "REAL DEFAULT 0.0")
