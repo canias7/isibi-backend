@@ -2471,3 +2471,63 @@ def disable_shopify(user=Depends(verify_token)):
     except Exception as e:
         conn.close()
         return {"success": False, "error": str(e)}
+
+
+# ========== Password Reset ==========
+
+from password_reset import create_password_reset_request, verify_reset_token, reset_password_with_token
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+@router.post("/auth/forgot-password")
+def forgot_password(payload: ForgotPasswordRequest):
+    """
+    Request password reset (no authentication required)
+    """
+    result = create_password_reset_request(payload.email)
+    
+    # Always return success to not reveal if email exists
+    return {
+        "success": True,
+        "message": "If that email exists, a reset link has been sent to your inbox."
+    }
+
+
+@router.post("/auth/verify-reset-token")
+def verify_token(token: str):
+    """
+    Verify if reset token is valid (no authentication required)
+    """
+    result = verify_reset_token(token)
+    
+    if result.get("valid"):
+        return {
+            "valid": True,
+            "email": result.get("email")
+        }
+    else:
+        return {
+            "valid": False,
+            "error": result.get("error")
+        }
+
+
+@router.post("/auth/reset-password")
+def reset_password(payload: ResetPasswordRequest):
+    """
+    Reset password with token (no authentication required)
+    """
+    # Validate password length
+    if len(payload.new_password) < 8:
+        return {
+            "success": False,
+            "error": "Password must be at least 8 characters"
+        }
+    
+    result = reset_password_with_token(payload.token, payload.new_password)
+    return result
