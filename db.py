@@ -324,6 +324,11 @@ def init_db():
     add_column_if_missing(conn, "users", "square_environment", "TEXT")
     add_column_if_missing(conn, "users", "square_enabled", "BOOLEAN DEFAULT FALSE")
     
+    # ElevenLabs voice integration columns
+    add_column_if_missing(conn, "users", "elevenlabs_api_key", "TEXT")
+    add_column_if_missing(conn, "users", "elevenlabs_enabled", "BOOLEAN DEFAULT FALSE")
+    add_column_if_missing(conn, "agents", "elevenlabs_voice_id", "TEXT")  # Per-agent voice selection
+    
     # Usage tracking migrations
     add_column_if_missing(conn, "call_usage", "revenue_usd", "REAL DEFAULT 0.0")
     add_column_if_missing(conn, "call_usage", "profit_usd", "REAL DEFAULT 0.0")

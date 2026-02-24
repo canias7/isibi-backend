@@ -1906,3 +1906,171 @@ def disable_square(user=Depends(verify_token)):
     except Exception as e:
         conn.close()
         return {"success": False, "error": str(e)}
+
+
+# ========== ElevenLabs Voice Integration ==========
+
+from elevenlabs_integration import get_available_voices, get_user_info, get_popular_voices
+
+class ElevenLabsConfigRequest(BaseModel):
+    elevenlabs_api_key: str
+
+@router.post("/elevenlabs/configure")
+def configure_elevenlabs(payload: ElevenLabsConfigRequest, user=Depends(verify_token)):
+    """
+    Configure ElevenLabs integration for user
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    # Add columns if they don't exist
+    from db import add_column_if_missing
+    add_column_if_missing(conn, 'users', 'elevenlabs_api_key', 'TEXT')
+    add_column_if_missing(conn, 'users', 'elevenlabs_enabled', 'BOOLEAN DEFAULT FALSE')
+    
+    cur.execute(sql("""
+        UPDATE users
+        SET elevenlabs_api_key = {PH},
+            elevenlabs_enabled = TRUE
+        WHERE id = {PH}
+    """), (payload.elevenlabs_api_key, user_id))
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        "success": True,
+        "message": "ElevenLabs configured successfully"
+    }
+
+
+@router.get("/elevenlabs/status")
+def get_elevenlabs_status(user=Depends(verify_token)):
+    """
+    Check if ElevenLabs is configured
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    try:
+        cur.execute(sql("""
+            SELECT elevenlabs_enabled
+            FROM users
+            WHERE id = {PH}
+        """), (user_id,))
+        
+        row = cur.fetchone()
+    except:
+        conn.close()
+        return {"configured": False}
+    
+    conn.close()
+    
+    if not row:
+        return {"configured": False}
+    
+    if isinstance(row, dict):
+        enabled = row.get('elevenlabs_enabled')
+    else:
+        enabled = row[0] if row else False
+    
+    return {"configured": bool(enabled)}
+
+
+@router.get("/elevenlabs/voices")
+def list_elevenlabs_voices(user=Depends(verify_token)):
+    """
+    List available ElevenLabs voices
+    """
+    result = get_available_voices()
+    return result
+
+
+@router.get("/elevenlabs/popular-voices")
+def list_popular_voices():
+    """
+    Get list of popular pre-made voices
+    """
+    return {
+        "success": True,
+        "voices": get_popular_voices()
+    }
+
+
+@router.get("/elevenlabs/subscription")
+def get_elevenlabs_subscription(user=Depends(verify_token)):
+    """
+    Get ElevenLabs subscription info
+    """
+    result = get_user_info()
+    return result
+
+
+@router.post("/elevenlabs/disable")
+def disable_elevenlabs(user=Depends(verify_token)):
+    """
+    Disable ElevenLabs
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    try:
+        cur.execute(sql("""
+            UPDATE users
+            SET elevenlabs_enabled = FALSE
+            WHERE id = {PH}
+        """), (user_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        return {"success": True, "message": "ElevenLabs disabled"}
+    except Exception as e:
+        conn.close()
+        return {"success": False, "error": str(e)}
+
+
+@router.put("/agents/{agent_id}/voice")
+def set_agent_voice(agent_id: int, voice_id: str, user=Depends(verify_token)):
+    """
+    Set ElevenLabs voice for an agent
+    """
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    # Verify agent belongs to user
+    user_id = user["id"]
+    cur.execute(sql("""
+        SELECT id FROM agents 
+        WHERE id = {PH} AND owner_user_id = {PH}
+    """), (agent_id, user_id))
+    
+    if not cur.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    # Update voice
+    cur.execute(sql("""
+        UPDATE agents
+        SET elevenlabs_voice_id = {PH}
+        WHERE id = {PH}
+    """), (voice_id, agent_id))
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        "success": True,
+        "message": "Voice updated",
+        "voice_id": voice_id
+    }
