@@ -1879,3 +1879,30 @@ def refund_square_payment(payment_id: str, user=Depends(verify_token), amount: O
         reason="Customer refund request"
     )
     return result
+
+
+@router.post("/square/disable")
+def disable_square(user=Depends(verify_token)):
+    """
+    Disable Square payments
+    """
+    user_id = user["id"]
+    
+    from db import get_conn, sql
+    conn = get_conn()
+    cur = conn.cursor()
+    
+    try:
+        cur.execute(sql("""
+            UPDATE users
+            SET square_enabled = FALSE
+            WHERE id = {PH}
+        """), (user_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        return {"success": True, "message": "Square payments disabled"}
+    except Exception as e:
+        conn.close()
+        return {"success": False, "error": str(e)}
