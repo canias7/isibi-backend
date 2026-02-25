@@ -506,15 +506,17 @@ async def stripe_webhook(request: Request):
         payment_intent = event["data"]["object"]
         user_id = int(payment_intent["metadata"]["user_id"])
         credit_amount = float(payment_intent["metadata"]["credit_amount"])
+        payment_id = payment_intent["id"]
         
         # Add credits to user's account
         add_credits(
             user_id,
             credit_amount,
-            f"Credit purchase via Stripe - ${credit_amount} (Transaction: {payment_intent['id']})"
+            f"Credit purchase via Stripe - ${credit_amount}",
+            transaction_id=payment_id
         )
         
-        print(f"✅ Added ${credit_amount} credits to user {user_id}")
+        print(f"✅ Added ${credit_amount} credits to user {user_id} - Payment ID: {payment_id}")
     
     return {"ok": True}
 

@@ -1038,7 +1038,7 @@ def get_user_credits(user_id: int):
     }
 
 
-def add_credits(user_id: int, amount: float, description: str = "Credit purchase"):
+def add_credits(user_id: int, amount: float, description: str = "Credit purchase", transaction_id: str = None):
     """Add credits to user's account (when they buy credits)"""
     conn = get_conn()
     cur = conn.cursor()
@@ -1091,15 +1091,27 @@ def add_credits(user_id: int, amount: float, description: str = "Credit purchase
             # Check if this is an auto-recharge
             is_auto_recharge = "auto-recharge" in description.lower()
             
-            send_invoice_email(
+            print(f"📧 Sending invoice email to {user_email} for ${amount:.2f}")
+            
+            result = send_invoice_email(
                 email=user_email,
                 amount=amount,
                 transaction_type="auto_recharge" if is_auto_recharge else "purchase",
                 payment_method="Credit Card",
+                transaction_id=transaction_id,
                 is_auto_recharge=is_auto_recharge
             )
+            
+            if result.get("success"):
+                print(f"✅ Invoice email sent successfully to {user_email}")
+            else:
+                print(f"❌ Invoice email failed: {result.get('error')}")
+        else:
+            print(f"⚠️ No user found with ID {user_id}")
     except Exception as e:
         print(f"⚠️ Failed to send invoice email: {e}")
+        import traceback
+        traceback.print_exc()
     
     return new_balance
 
