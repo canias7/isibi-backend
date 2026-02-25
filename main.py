@@ -1389,3 +1389,22 @@ def get_shopify_tools() -> list:
             }
         }
     ]
+
+
+# ========== Voice Chat WebSocket Endpoint ==========
+
+@app.websocket("/voice-chat")
+async def voice_chat_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for voice chat with ISIBI
+    Public endpoint - no authentication required
+    """
+    await websocket.accept()
+    
+    print(f"🎤 Voice chat connection from {websocket.client.host}")
+    
+    # Import voice chat handler
+    from voice_chat import handle_voice_chat
+    
+    # Handle the voice chat session
+    await handle_voice_chat(websocket, None)
