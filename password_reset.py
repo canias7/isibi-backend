@@ -150,7 +150,7 @@ def get_reset_email_html(reset_link: str) -> str:
         .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
         .header {{ background: #4F46E5; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }}
         .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px; }}
-        .button {{ display: inline-block; padding: 12px 30px; background: #4F46E5; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }}
+        .button {{ display: inline-block; padding: 12px 30px; background: #FFC107; color: #000; text-decoration: none; border-radius: 5px; margin: 20px 0; font-weight: bold; }}
         .footer {{ text-align: center; margin-top: 20px; color: #666; font-size: 12px; }}
     </style>
 </head>
