@@ -309,19 +309,28 @@ async def handle_media_stream(websocket: WebSocket):
                                     if credits["balance"] <= 0:
                                         logger.warning(f"❌ User {owner_user_id} has no credits! Balance: ${credits['balance']} - BLOCKING CALL")
                                         
-                                        # Send low balance message and end call
+                                        # Send low balance message
                                         await openai_ws.send(json.dumps({
                                             "type": "response.create",
                                             "response": {
                                                 "modalities": ["audio", "text"],
-                                                "instructions": "Say exactly: 'I'm sorry, but your account has insufficient credits. Please add credits at your dashboard to continue using this service. Thank you, goodbye.' Then end the conversation."
+                                                "instructions": "Say exactly: 'I'm sorry, but your account has insufficient credits. Please add credits at your dashboard to continue using this service. Thank you, goodbye.'"
                                             }
                                         }))
                                         
-                                        # Wait a moment for message to play, then close
+                                        # Wait for message to finish playing (about 8 seconds)
                                         await asyncio.sleep(8)
-                                        logger.info("🚫 Call blocked due to insufficient credits")
-                                        break  # End call
+                                        
+                                        logger.info("🚫 Call blocked due to insufficient credits - hanging up")
+                                        
+                                        # Close OpenAI connection
+                                        await openai_ws.close()
+                                        
+                                        # Close Twilio connection to end call
+                                        await twilio_ws.close()
+                                        
+                                        # Exit the handler
+                                        return
                                     else:
                                         logger.info(f"💳 User has ${credits['balance']:.2f} in credits - call proceeding")
                                     
