@@ -23,7 +23,7 @@ def send_invoice_email(
     is_auto_recharge: bool = False
 ) -> dict:
     """
-    Send invoice email for credit purchase or auto-recharge
+    Send invoice email for credit purchase or auto-recharge with PDF attachment
     
     Args:
         email: Customer email
@@ -63,7 +63,27 @@ def send_invoice_email(
             title=title
         )
         
-        # Send via SendGrid
+        # Generate PDF invoice
+        from invoice_pdf import generate_invoice_pdf, generate_invoice_filename
+        
+        # Get customer name from email (first part before @)
+        customer_name = email.split('@')[0].title()
+        
+        pdf_bytes = generate_invoice_pdf(
+            customer_email=email,
+            customer_name=customer_name,
+            amount=amount,
+            transaction_id=invoice_number,
+            is_auto_recharge=is_auto_recharge
+        )
+        
+        pdf_filename = generate_invoice_filename(invoice_number)
+        
+        # Encode PDF as base64 for SendGrid
+        import base64
+        pdf_base64 = base64.b64encode(pdf_bytes).decode()
+        
+        # Send via SendGrid with attachment
         message = Mail(
             from_email=SMTP_FROM,
             to_emails=email,
@@ -71,14 +91,27 @@ def send_invoice_email(
             html_content=html
         )
         
+        # Attach PDF
+        from sendgrid.helpers.mail import Attachment, FileContent, FileName, FileType, Disposition
+        
+        attachment = Attachment(
+            FileContent(pdf_base64),
+            FileName(pdf_filename),
+            FileType('application/pdf'),
+            Disposition('attachment')
+        )
+        message.attachment = attachment
+        
         sg = SendGridAPIClient(SENDGRID_API_KEY)
         response = sg.send(message)
         
-        print(f"✅ Invoice email sent to {email} - ${amount:.2f}")
+        print(f"✅ Invoice email sent to {email} - ${amount:.2f} (PDF attached: {pdf_filename})")
         return {"success": True}
     
     except Exception as e:
         print(f"❌ Failed to send invoice email: {e}")
+        import traceback
+        traceback.print_exc()
         return {"success": False, "error": str(e)}
 
 
