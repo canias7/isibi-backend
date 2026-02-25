@@ -2533,3 +2533,81 @@ def reset_password(payload: ResetPasswordRequest):
     
     result = reset_password_with_token(payload.token, payload.new_password)
     return result
+
+
+# ========== Web Chat (Talk to ISIBI) ==========
+
+from web_chat import create_chat_conversation, save_chat_log, get_chat_logs, get_session_stats
+
+class ChatMessageRequest(BaseModel):
+    message: str
+    session_id: str
+    conversation_history: Optional[list] = []
+
+@router.post("/chat/message")
+def send_chat_message(payload: ChatMessageRequest, request: Request):
+    """
+    Send message to ISIBI AI chat (public endpoint - no auth required)
+    
+    This is for the "Talk to ISIBI" feature on the homepage
+    """
+    # Get user IP for logging
+    user_ip = request.client.host
+    
+    # Validate message
+    if not payload.message or len(payload.message) < 1:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+    
+    if len(payload.message) > 1000:
+        raise HTTPException(status_code=400, detail="Message too long (max 1000 characters)")
+    
+    # Create conversation
+    result = create_chat_conversation(
+        user_message=payload.message,
+        conversation_history=payload.conversation_history
+    )
+    
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Failed to process message"))
+    
+    # Save to logs
+    save_chat_log(
+        session_id=payload.session_id,
+        user_message=payload.message,
+        ai_response=result["response"],
+        user_ip=user_ip
+    )
+    
+    return {
+        "success": True,
+        "response": result["response"],
+        "conversation_history": result["conversation_history"],
+        "tokens_used": result.get("tokens_used", 0)
+    }
+
+
+@router.get("/chat/logs/{session_id}")
+def get_session_logs(session_id: str, user=Depends(verify_token)):
+    """
+    Get conversation logs for a specific session (requires auth)
+    """
+    logs = get_chat_logs(session_id=session_id)
+    return {"logs": logs}
+
+
+@router.get("/chat/logs")
+def get_all_chat_logs(user=Depends(verify_token), limit: int = 100):
+    """
+    Get all chat logs (requires auth - admin only)
+    """
+    logs = get_chat_logs(limit=limit)
+    return {"logs": logs}
+
+
+@router.get("/chat/stats")
+def get_chat_stats(user=Depends(verify_token)):
+    """
+    Get chat statistics (requires auth)
+    """
+    stats = get_session_stats()
+    return stats
