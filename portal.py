@@ -2678,3 +2678,17 @@ def get_help_usage_stats(user=Depends(verify_token)):
     user_id = user["id"]
     stats = get_help_stats(user_id=user_id)
     return stats
+
+
+# ========== Test Agent ==========
+
+from test_agent import get_agent_test_calls
+
+@router.get("/agents/{agent_id}/test-calls")
+def get_test_call_history(agent_id: int, user=Depends(verify_token)):
+    """
+    Get test call history for an agent
+    """
+    user_id = user["id"]
+    calls = get_agent_test_calls(agent_id, user_id, limit=10)
+    return {"test_calls": calls}

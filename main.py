@@ -1408,3 +1408,46 @@ async def voice_chat_endpoint(websocket: WebSocket):
     
     # Handle the voice chat session
     await handle_voice_chat(websocket, None)
+
+
+# ========== Test Agent WebSocket Endpoint ==========
+
+@app.websocket("/test-agent/{agent_id}")
+async def test_agent_endpoint(websocket: WebSocket, agent_id: int):
+    """
+    WebSocket endpoint for testing an agent with voice
+    Requires authentication via query parameter
+    """
+    await websocket.accept()
+    
+    # Get user_id from query parameter (token)
+    token = websocket.query_params.get("token")
+    
+    if not token:
+        await websocket.send(json.dumps({
+            "type": "error",
+            "error": "Authentication required"
+        }))
+        await websocket.close()
+        return
+    
+    # Verify token
+    try:
+        from auth import verify_token
+        user = verify_token(token)
+        user_id = user["id"]
+    except:
+        await websocket.send(json.dumps({
+            "type": "error",
+            "error": "Invalid authentication"
+        }))
+        await websocket.close()
+        return
+    
+    print(f"🎤 Test agent connection: agent_id={agent_id}, user_id={user_id}")
+    
+    # Import test agent handler
+    from test_agent import handle_test_agent_call
+    
+    # Handle the test call
+    await handle_test_agent_call(websocket, agent_id, user_id)
