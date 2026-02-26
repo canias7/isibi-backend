@@ -2611,3 +2611,70 @@ def get_chat_stats(user=Depends(verify_token)):
     """
     stats = get_session_stats()
     return stats
+
+
+# ========== AI Help Assistant ==========
+
+from help_ai import create_help_conversation, save_help_log, get_help_stats, get_common_questions
+
+class HelpMessageRequest(BaseModel):
+    message: str
+    session_id: str
+    conversation_history: Optional[list] = []
+
+@router.post("/help/ask")
+def ask_help_ai(payload: HelpMessageRequest, user=Depends(verify_token)):
+    """
+    Ask the AI help assistant a question about using the platform
+    """
+    user_id = user["id"]
+    
+    # Validate message
+    if not payload.message or len(payload.message) < 1:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+    
+    if len(payload.message) > 500:
+        raise HTTPException(status_code=400, detail="Message too long (max 500 characters)")
+    
+    # Create conversation
+    result = create_help_conversation(
+        user_message=payload.message,
+        conversation_history=payload.conversation_history,
+        user_id=user_id
+    )
+    
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Failed to get response"))
+    
+    # Save to logs
+    save_help_log(
+        user_id=user_id,
+        session_id=payload.session_id,
+        user_message=payload.message,
+        ai_response=result["response"]
+    )
+    
+    return {
+        "success": True,
+        "response": result["response"],
+        "conversation_history": result["conversation_history"]
+    }
+
+
+@router.get("/help/common-questions")
+def get_help_common_questions():
+    """
+    Get list of common help questions (no auth required - can be shown before user asks)
+    """
+    questions = get_common_questions()
+    return {"questions": questions}
+
+
+@router.get("/help/stats")
+def get_help_usage_stats(user=Depends(verify_token)):
+    """
+    Get help usage statistics for current user
+    """
+    user_id = user["id"]
+    stats = get_help_stats(user_id=user_id)
+    return stats
