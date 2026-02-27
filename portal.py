@@ -1912,7 +1912,7 @@ def disable_square(user=Depends(verify_token)):
 
 # ========== ElevenLabs Voice Integration ==========
 
-from elevenlabs_integration import get_available_voices, get_user_info, get_popular_voices
+from elevenlabs_integration import get_available_voices
 
 class ElevenLabsConfigRequest(BaseModel):
     elevenlabs_api_key: str
@@ -1999,9 +1999,10 @@ def list_popular_voices():
     """
     Get list of popular pre-made voices
     """
+    from elevenlabs_integration import POPULAR_VOICES
     return {
         "success": True,
-        "voices": get_popular_voices()
+        "voices": POPULAR_VOICES
     }
 
 
@@ -2010,7 +2011,8 @@ def get_elevenlabs_subscription(user=Depends(verify_token)):
     """
     Get ElevenLabs subscription info
     """
-    result = get_user_info()
+    from elevenlabs_integration import get_user_subscription
+    result = get_user_subscription()
     return result
 
 
