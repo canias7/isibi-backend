@@ -90,6 +90,12 @@ async def handle_voice_chat(websocket, path):
             # Store conversation log
             conversation_log = []
             
+            # Send notification to client that connection is ready
+            await websocket.send(json.dumps({
+                "type": "session.ready",
+                "message": "Connected successfully"
+            }))
+            
             # Bidirectional relay
             async def relay_client_to_openai():
                 """Forward audio from client to OpenAI"""
@@ -112,6 +118,8 @@ async def handle_voice_chat(websocket, path):
             
             async def relay_openai_to_client():
                 """Forward responses from OpenAI to client"""
+                current_assistant_message = ""
+                
                 try:
                     async for message in openai_ws:
                         data = json.loads(message)
@@ -125,14 +133,39 @@ async def handle_voice_chat(websocket, path):
                                 audio_bytes = bytes.fromhex(audio_delta)
                                 await websocket.send(audio_bytes)
                         
-                        # Log transcript
+                        # Send transcript updates to client
                         elif event_type == "response.audio_transcript.delta":
-                            transcript = data.get("delta")
-                            if transcript:
-                                print(f"🤖 AI: {transcript}")
+                            transcript_delta = data.get("delta", "")
+                            current_assistant_message += transcript_delta
+                            
+                            # Send transcript update to client
+                            await websocket.send(json.dumps({
+                                "type": "transcript.assistant.delta",
+                                "content": transcript_delta
+                            }))
+                            
+                            print(f"🤖 AI: {transcript_delta}", end="", flush=True)
+                        
+                        elif event_type == "response.audio_transcript.done":
+                            # Assistant finished speaking
+                            if current_assistant_message:
+                                conversation_log.append({
+                                    "role": "assistant",
+                                    "content": current_assistant_message,
+                                    "timestamp": datetime.now().isoformat()
+                                })
+                                
+                                # Send complete message to client
+                                await websocket.send(json.dumps({
+                                    "type": "transcript.assistant.complete",
+                                    "content": current_assistant_message
+                                }))
+                                
+                                print()  # New line after AI message
+                                current_assistant_message = ""
                         
                         elif event_type == "conversation.item.input_audio_transcription.completed":
-                            transcript = data.get("transcript")
+                            transcript = data.get("transcript", "")
                             if transcript:
                                 print(f"👤 User: {transcript}")
                                 
@@ -142,9 +175,15 @@ async def handle_voice_chat(websocket, path):
                                     "content": transcript,
                                     "timestamp": datetime.now().isoformat()
                                 })
+                                
+                                # Send user transcript to client
+                                await websocket.send(json.dumps({
+                                    "type": "transcript.user.complete",
+                                    "content": transcript
+                                }))
                         
-                        # Forward other events to client
-                        await websocket.send(json.dumps(data))
+                        # Forward other events to client (for debugging)
+                        # await websocket.send(json.dumps(data))
                         
                 except websockets.exceptions.ConnectionClosed:
                     print(f"❌ OpenAI disconnected")

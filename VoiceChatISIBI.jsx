@@ -191,33 +191,38 @@ export default function VoiceChatISIBI() {
   const handleServerEvent = (data) => {
     const { type } = data;
     
-    if (type === 'conversation.item.input_audio_transcription.completed') {
-      // User's speech transcribed
+    if (type === 'session.ready') {
+      // Connection ready
+      console.log('✅ Session ready');
+    } else if (type === 'transcript.user.complete') {
+      // User's speech transcribed - add complete message
       setTranscript(prev => [...prev, {
         role: 'user',
-        content: data.transcript,
+        content: data.content,
         timestamp: new Date()
       }]);
-    } else if (type === 'response.audio_transcript.delta') {
-      // AI's response transcript (live update)
+    } else if (type === 'transcript.assistant.delta') {
+      // AI's response transcript (live streaming)
       setTranscript(prev => {
         const last = prev[prev.length - 1];
         if (last && last.role === 'assistant' && !last.complete) {
+          // Update existing message
           return [
             ...prev.slice(0, -1),
-            { ...last, content: last.content + data.delta }
+            { ...last, content: last.content + data.content }
           ];
         } else {
+          // Start new message
           return [...prev, {
             role: 'assistant',
-            content: data.delta,
+            content: data.content,
             timestamp: new Date(),
             complete: false
           }];
         }
       });
-    } else if (type === 'response.audio_transcript.done') {
-      // AI finished speaking
+    } else if (type === 'transcript.assistant.complete') {
+      // AI finished speaking - mark as complete
       setTranscript(prev => {
         const last = prev[prev.length - 1];
         if (last && last.role === 'assistant') {
@@ -228,6 +233,8 @@ export default function VoiceChatISIBI() {
         }
         return prev;
       });
+    } else if (type === 'error') {
+      setError(data.error || 'An error occurred');
     }
   };
 
@@ -304,15 +311,24 @@ export default function VoiceChatISIBI() {
 
               {/* Transcript */}
               <div className="transcript">
-                <h4>Conversation</h4>
+                <h4>📝 Live Conversation</h4>
                 <div className="transcript-messages">
                   {transcript.length === 0 ? (
-                    <p className="empty-state">Start speaking to begin the conversation</p>
+                    <p className="empty-state">Conversation will appear here as you speak...</p>
                   ) : (
                     transcript.map((msg, idx) => (
                       <div key={idx} className={`transcript-msg ${msg.role}`}>
-                        <div className="msg-role">
-                          {msg.role === 'user' ? '👤 You' : '🤖 ISIBI'}
+                        <div className="msg-header">
+                          <span className="msg-role">
+                            {msg.role === 'user' ? '👤 You' : '🤖 ISIBI'}
+                          </span>
+                          <span className="msg-time">
+                            {msg.timestamp.toLocaleTimeString([], { 
+                              hour: '2-digit', 
+                              minute: '2-digit',
+                              second: '2-digit'
+                            })}
+                          </span>
                         </div>
                         <div className="msg-content">{msg.content}</div>
                       </div>
@@ -563,8 +579,23 @@ export default function VoiceChatISIBI() {
           margin-bottom: 6px;
         }
 
+        .msg-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 8px;
+        }
+
+        .msg-time {
+          font-size: 11px;
+          color: #6b7280;
+          font-weight: 500;
+        }
+
         .msg-content {
           line-height: 1.5;
+          font-size: 15px;
+          color: #1f2937;
         }
 
         .end-button {
