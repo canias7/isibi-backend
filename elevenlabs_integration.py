@@ -1,39 +1,26 @@
 import os
 import requests
-from typing import List, Dict
+from typing import Dict, List, Optional
+import base64
 
-# ElevenLabs API
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 ELEVENLABS_API_URL = "https://api.elevenlabs.io/v1"
 
 
-def get_available_voices() -> Dict:
+def get_available_voices() -> List[Dict]:
     """
     Get list of available ElevenLabs voices
     
     Returns:
-        {
-            "success": bool,
-            "voices": [
-                {
-                    "voice_id": str,
-                    "name": str,
-                    "description": str,
-                    "preview_url": str,
-                    "category": str (e.g., "premade", "cloned")
-                }
-            ],
-            "error": str (if failed)
-        }
+        List of voices with id, name, and preview_url
     """
     if not ELEVENLABS_API_KEY:
-        return {"success": False, "error": "ElevenLabs API key not configured"}
+        return []
     
     try:
         response = requests.get(
             f"{ELEVENLABS_API_URL}/voices",
-            headers={"xi-api-key": ELEVENLABS_API_KEY},
-            timeout=10
+            headers={"xi-api-key": ELEVENLABS_API_KEY}
         )
         
         if response.status_code == 200:
@@ -44,44 +31,49 @@ def get_available_voices() -> Dict:
                 voices.append({
                     "voice_id": voice.get("voice_id"),
                     "name": voice.get("name"),
-                    "description": voice.get("description", ""),
-                    "preview_url": voice.get("preview_url", ""),
+                    "preview_url": voice.get("preview_url"),
                     "category": voice.get("category", "premade"),
-                    "labels": voice.get("labels", {})
+                    "labels": voice.get("labels", {}),
+                    "description": voice.get("description", "")
                 })
             
-            return {
-                "success": True,
-                "voices": voices
-            }
+            return voices
         else:
-            return {
-                "success": False,
-                "error": f"HTTP {response.status_code}: {response.text}"
-            }
+            print(f"❌ Failed to get ElevenLabs voices: {response.status_code}")
+            return []
     
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        print(f"❌ Error getting ElevenLabs voices: {e}")
+        return []
 
 
-def text_to_speech(text: str, voice_id: str, model_id: str = "eleven_turbo_v2") -> Dict:
+def text_to_speech(
+    text: str,
+    voice_id: str,
+    model_id: str = "eleven_turbo_v2_5",
+    stability: float = 0.5,
+    similarity_boost: float = 0.75,
+    style: float = 0.0,
+    use_speaker_boost: bool = True
+) -> Optional[bytes]:
     """
     Convert text to speech using ElevenLabs
     
     Args:
         text: Text to convert to speech
         voice_id: ElevenLabs voice ID
-        model_id: Model to use (eleven_turbo_v2 is fastest, eleven_multilingual_v2 for more languages)
+        model_id: Model to use (eleven_turbo_v2_5 for low latency)
+        stability: Voice stability (0-1)
+        similarity_boost: Voice similarity (0-1)
+        style: Style exaggeration (0-1)
+        use_speaker_boost: Enable speaker boost
     
     Returns:
-        {
-            "success": bool,
-            "audio_bytes": bytes (audio data),
-            "error": str (if failed)
-        }
+        Audio bytes or None if failed
     """
     if not ELEVENLABS_API_KEY:
-        return {"success": False, "error": "ElevenLabs API key not configured"}
+        print("❌ ELEVENLABS_API_KEY not set")
+        return None
     
     try:
         response = requests.post(
@@ -94,135 +86,228 @@ def text_to_speech(text: str, voice_id: str, model_id: str = "eleven_turbo_v2") 
                 "text": text,
                 "model_id": model_id,
                 "voice_settings": {
-                    "stability": 0.5,
-                    "similarity_boost": 0.75
+                    "stability": stability,
+                    "similarity_boost": similarity_boost,
+                    "style": style,
+                    "use_speaker_boost": use_speaker_boost
                 }
-            },
-            timeout=30
+            }
         )
         
         if response.status_code == 200:
-            return {
-                "success": True,
-                "audio_bytes": response.content
-            }
+            return response.content
         else:
-            return {
-                "success": False,
-                "error": f"HTTP {response.status_code}: {response.text}"
-            }
+            print(f"❌ ElevenLabs TTS failed: {response.status_code} - {response.text}")
+            return None
     
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        print(f"❌ Error calling ElevenLabs TTS: {e}")
+        return None
 
 
-def get_voice_settings(voice_id: str) -> Dict:
+def stream_text_to_speech(
+    text: str,
+    voice_id: str,
+    model_id: str = "eleven_turbo_v2_5",
+    stability: float = 0.5,
+    similarity_boost: float = 0.75,
+    output_format: str = "pcm_16000"
+):
     """
-    Get current settings for a voice
+    Stream text to speech for real-time applications
+    
+    Args:
+        text: Text to convert
+        voice_id: ElevenLabs voice ID
+        model_id: Model to use
+        stability: Voice stability
+        similarity_boost: Voice similarity
+        output_format: Audio format (pcm_16000, mp3_44100_128, etc.)
+    
+    Yields:
+        Audio chunks
+    """
+    if not ELEVENLABS_API_KEY:
+        print("❌ ELEVENLABS_API_KEY not set")
+        return
+    
+    try:
+        response = requests.post(
+            f"{ELEVENLABS_API_URL}/text-to-speech/{voice_id}/stream",
+            headers={
+                "xi-api-key": ELEVENLABS_API_KEY,
+                "Content-Type": "application/json"
+            },
+            json={
+                "text": text,
+                "model_id": model_id,
+                "voice_settings": {
+                    "stability": stability,
+                    "similarity_boost": similarity_boost
+                },
+                "output_format": output_format
+            },
+            stream=True
+        )
+        
+        if response.status_code == 200:
+            for chunk in response.iter_content(chunk_size=1024):
+                if chunk:
+                    yield chunk
+        else:
+            print(f"❌ ElevenLabs streaming failed: {response.status_code}")
+    
+    except Exception as e:
+        print(f"❌ Error streaming ElevenLabs TTS: {e}")
+
+
+def get_voice_info(voice_id: str) -> Optional[Dict]:
+    """
+    Get detailed information about a specific voice
     
     Args:
         voice_id: ElevenLabs voice ID
     
     Returns:
-        Voice settings dict
+        Voice information or None
     """
     if not ELEVENLABS_API_KEY:
-        return {"success": False, "error": "ElevenLabs API key not configured"}
+        return None
     
     try:
         response = requests.get(
-            f"{ELEVENLABS_API_URL}/voices/{voice_id}/settings",
-            headers={"xi-api-key": ELEVENLABS_API_KEY},
-            timeout=10
+            f"{ELEVENLABS_API_URL}/voices/{voice_id}",
+            headers={"xi-api-key": ELEVENLABS_API_KEY}
         )
         
         if response.status_code == 200:
-            return {
-                "success": True,
-                "settings": response.json()
-            }
+            return response.json()
         else:
-            return {
-                "success": False,
-                "error": f"HTTP {response.status_code}"
-            }
+            return None
     
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        print(f"❌ Error getting voice info: {e}")
+        return None
 
 
-def get_user_info() -> Dict:
+def get_user_subscription() -> Optional[Dict]:
     """
-    Get ElevenLabs user subscription info
+    Get ElevenLabs subscription information
+    
+    Returns:
+        Subscription details or None
+    """
+    if not ELEVENLABS_API_KEY:
+        return None
+    
+    try:
+        response = requests.get(
+            f"{ELEVENLABS_API_URL}/user/subscription",
+            headers={"xi-api-key": ELEVENLABS_API_KEY}
+        )
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return None
+    
+    except Exception as e:
+        print(f"❌ Error getting subscription: {e}")
+        return None
+
+
+# Popular ElevenLabs voices (as fallback if API is unavailable)
+POPULAR_VOICES = [
+    {
+        "voice_id": "21m00Tcm4TlvDq8ikWAM",
+        "name": "Rachel",
+        "category": "premade",
+        "description": "Calm, young, female American voice"
+    },
+    {
+        "voice_id": "AZnzlk1XvdvUeBnXmlld",
+        "name": "Domi",
+        "category": "premade",
+        "description": "Strong, female American voice"
+    },
+    {
+        "voice_id": "EXAVITQu4vr4xnSDxMaL",
+        "name": "Bella",
+        "category": "premade",
+        "description": "Soft, young, female American voice"
+    },
+    {
+        "voice_id": "ErXwobaYiN019PkySvjV",
+        "name": "Antoni",
+        "category": "premade",
+        "description": "Well-rounded, young, male American voice"
+    },
+    {
+        "voice_id": "MF3mGyEYCl7XYWbV9V6O",
+        "name": "Elli",
+        "category": "premade",
+        "description": "Emotional, young, female American voice"
+    },
+    {
+        "voice_id": "TxGEqnHWrfWFTfGW9XjX",
+        "name": "Josh",
+        "category": "premade",
+        "description": "Deep, young, male American voice"
+    },
+    {
+        "voice_id": "VR6AewLTigWG4xSOukaG",
+        "name": "Arnold",
+        "category": "premade",
+        "description": "Crisp, middle-aged, male American voice"
+    },
+    {
+        "voice_id": "pNInz6obpgDQGcFmaJgB",
+        "name": "Adam",
+        "category": "premade",
+        "description": "Deep, middle-aged, male American voice"
+    },
+    {
+        "voice_id": "yoZ06aMxZJJ28mfd3POQ",
+        "name": "Sam",
+        "category": "premade",
+        "description": "Raspy, young, male American voice"
+    }
+]
+
+
+def get_all_voice_options() -> Dict:
+    """
+    Get all available voice options from both OpenAI and ElevenLabs
     
     Returns:
         {
-            "success": bool,
-            "subscription": {
-                "tier": str,
-                "character_count": int,
-                "character_limit": int,
-                "can_use_instant_voice_cloning": bool
-            },
-            "error": str (if failed)
+            "openai": [...],
+            "elevenlabs": [...]
         }
     """
-    if not ELEVENLABS_API_KEY:
-        return {"success": False, "error": "ElevenLabs API key not configured"}
-    
-    try:
-        response = requests.get(
-            f"{ELEVENLABS_API_URL}/user",
-            headers={"xi-api-key": ELEVENLABS_API_KEY},
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            subscription = data.get("subscription", {})
-            
-            return {
-                "success": True,
-                "subscription": {
-                    "tier": subscription.get("tier", "free"),
-                    "character_count": subscription.get("character_count", 0),
-                    "character_limit": subscription.get("character_limit", 0),
-                    "can_use_instant_voice_cloning": subscription.get("can_use_instant_voice_cloning", False),
-                    "can_use_professional_voice_cloning": subscription.get("can_use_professional_voice_cloning", False)
-                }
-            }
-        else:
-            return {
-                "success": False,
-                "error": f"HTTP {response.status_code}"
-            }
-    
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-# Popular pre-made voices for quick reference
-POPULAR_VOICES = {
-    "Rachel": "21m00Tcm4TlvDq8ikWAM",  # American Female - Calm
-    "Domi": "AZnzlk1XvdvUeBnXmlld",    # American Female - Strong
-    "Bella": "EXAVITQu4vr4xnSDxMaL",   # American Female - Soft
-    "Antoni": "ErXwobaYiN019PkySvjV",  # American Male - Well-rounded
-    "Elli": "MF3mGyEYCl7XYWbV9V6O",    # American Female - Emotional
-    "Josh": "TxGEqnHWrfWFTfGW9XjX",    # American Male - Deep
-    "Arnold": "VR6AewLTigWG4xSOukaG",  # American Male - Crisp
-    "Adam": "pNInz6obpgDQGcFmaJgB",    # American Male - Deep
-    "Sam": "yoZ06aMxZJJ28mfd3POQ"      # American Male - Raspy
-}
-
-
-def get_popular_voices() -> List[Dict]:
-    """
-    Get list of popular pre-made voices with their IDs
-    
-    Returns:
-        List of popular voice dicts
-    """
-    return [
-        {"name": name, "voice_id": voice_id}
-        for name, voice_id in POPULAR_VOICES.items()
+    # OpenAI voices
+    openai_voices = [
+        {"id": "alloy", "name": "Alloy", "description": "Neutral, balanced voice"},
+        {"id": "echo", "name": "Echo", "description": "Warm, friendly voice"},
+        {"id": "fable", "name": "Fable", "description": "Expressive, storytelling voice"},
+        {"id": "onyx", "name": "Onyx", "description": "Deep, authoritative voice"},
+        {"id": "nova", "name": "Nova", "description": "Energetic, bright voice"},
+        {"id": "shimmer", "name": "Shimmer", "description": "Soft, gentle voice"},
+        {"id": "ash", "name": "Ash", "description": "Clear, professional voice"},
+        {"id": "ballad", "name": "Ballad", "description": "Smooth, calm voice"},
+        {"id": "coral", "name": "Coral", "description": "Warm, engaging voice"},
+        {"id": "sage", "name": "Sage", "description": "Wise, thoughtful voice"},
+        {"id": "verse", "name": "Verse", "description": "Dynamic, expressive voice"}
     ]
+    
+    # Get ElevenLabs voices
+    elevenlabs_voices = get_available_voices()
+    
+    # If API call failed, use popular voices as fallback
+    if not elevenlabs_voices:
+        elevenlabs_voices = POPULAR_VOICES
+    
+    return {
+        "openai": openai_voices,
+        "elevenlabs": elevenlabs_voices
+    }
