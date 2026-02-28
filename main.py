@@ -1104,9 +1104,9 @@ async def handle_media_stream(websocket: WebSocket):
                             # Block OpenAI audio when using ElevenLabs (we'll use the transcript instead)
                             logger.info(f"🚫 Blocking OpenAI audio (using ElevenLabs)")
                             continue
-                        
-                        # For OpenAI voices: send audio to caller
-                        logger.info(f"🔊 OpenAI audio delta")
+                        else:
+                            # For OpenAI voices: send audio to caller
+                            logger.info(f"🔊 OpenAI audio delta (elevenlabs_handler={elevenlabs_handler})")
                         audio_b64 = resp.get("delta")
                         if not audio_b64 or not stream_sid:
                             continue
