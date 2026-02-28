@@ -629,11 +629,14 @@ async def handle_media_stream(websocket: WebSocket):
                         if not first_message_sent:
                             logger.info(f"📢 Triggering automatic greeting from system prompt")
                             
+                            # Set modalities based on voice provider
+                            greeting_modalities = ["text"] if elevenlabs_handler else ["text", "audio"]
+                            
                             # Trigger the AI to start speaking immediately using the greeting from its system prompt
                             await openai_ws.send(json.dumps({
                                 "type": "response.create",
                                 "response": {
-                                    "modalities": ["text", "audio"],
+                                    "modalities": greeting_modalities,
                                     "instructions": "Greet the caller now using the greeting from Section 2 of your system prompt."
                                 }
                             }))
