@@ -4,6 +4,7 @@ import asyncio
 import websockets
 import logging
 import base64
+import audioop  # For PCM to μ-law conversion
 from db import get_agent_prompt, init_db, get_agent_by_id, start_call_tracking, end_call_tracking, calculate_call_cost, calculate_call_revenue, get_user_credits, deduct_credits
 from prompt_api import router as prompt_router
 from fastapi import FastAPI, WebSocket, Request
@@ -115,10 +116,17 @@ class ElevenLabsVoiceHandler:
                 text=text_to_speak,
                 voice_id=self.voice_id,
                 model_id="eleven_turbo_v2_5",  # Fastest model
-                output_format="pcm_16000"  # 16kHz PCM (Twilio will convert)
+                output_format="pcm_16000"  # 16kHz PCM
             ):
-                # Convert to base64 and send to Twilio
-                audio_b64 = base64.b64encode(audio_chunk).decode('utf-8')
+                # Convert PCM to μ-law (Twilio expects 8kHz μ-law)
+                # First, resample from 16kHz to 8kHz
+                audio_8khz = audioop.ratecv(audio_chunk, 2, 1, 16000, 8000, None)[0]
+                
+                # Then convert to μ-law
+                audio_ulaw = audioop.lin2ulaw(audio_8khz, 2)
+                
+                # Encode to base64 and send to Twilio
+                audio_b64 = base64.b64encode(audio_ulaw).decode('utf-8')
                 
                 await self.websocket.send_text(json.dumps({
                     "event": "media",
