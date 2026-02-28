@@ -119,44 +119,65 @@ def stream_text_to_speech(
     Args:
         text: Text to convert
         voice_id: ElevenLabs voice ID
-        model_id: Model to use
+        model_id: Model to use (eleven_turbo_v2_5 for low latency)
         stability: Voice stability
         similarity_boost: Voice similarity
-        output_format: Audio format (pcm_16000, mp3_44100_128, etc.)
+        output_format: Audio format
+            - pcm_16000: 16kHz PCM (for Twilio, lowest latency)
+            - pcm_22050: 22.05kHz PCM
+            - pcm_24000: 24kHz PCM  
+            - mp3_44100_128: MP3 format
     
     Yields:
-        Audio chunks
+        Audio chunks (raw bytes)
     """
     if not ELEVENLABS_API_KEY:
         print("❌ ELEVENLABS_API_KEY not set")
         return
     
     try:
+        # Use streaming endpoint for lowest latency
+        url = f"{ELEVENLABS_API_URL}/text-to-speech/{voice_id}/stream"
+        
+        headers = {
+            "xi-api-key": ELEVENLABS_API_KEY,
+            "Content-Type": "application/json",
+            "Accept": "audio/mpeg" if output_format.startswith("mp3") else "audio/raw"
+        }
+        
+        payload = {
+            "text": text,
+            "model_id": model_id,
+            "voice_settings": {
+                "stability": stability,
+                "similarity_boost": similarity_boost,
+                "style": 0,
+                "use_speaker_boost": True
+            }
+        }
+        
+        # Add output format if supported by model
+        if model_id == "eleven_turbo_v2_5":
+            payload["output_format"] = output_format
+        
         response = requests.post(
-            f"{ELEVENLABS_API_URL}/text-to-speech/{voice_id}/stream",
-            headers={
-                "xi-api-key": ELEVENLABS_API_KEY,
-                "Content-Type": "application/json"
-            },
-            json={
-                "text": text,
-                "model_id": model_id,
-                "voice_settings": {
-                    "stability": stability,
-                    "similarity_boost": similarity_boost
-                },
-                "output_format": output_format
-            },
-            stream=True
+            url,
+            headers=headers,
+            json=payload,
+            stream=True,
+            timeout=5  # 5 second timeout for first byte
         )
         
         if response.status_code == 200:
+            # Stream audio chunks
             for chunk in response.iter_content(chunk_size=1024):
                 if chunk:
                     yield chunk
         else:
-            print(f"❌ ElevenLabs streaming failed: {response.status_code}")
+            print(f"❌ ElevenLabs streaming failed: {response.status_code} - {response.text}")
     
+    except requests.exceptions.Timeout:
+        print(f"⏱️ ElevenLabs request timed out")
     except Exception as e:
         print(f"❌ Error streaming ElevenLabs TTS: {e}")
 

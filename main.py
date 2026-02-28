@@ -3,6 +3,7 @@ import json
 import asyncio
 import websockets
 import logging
+import base64
 from db import get_agent_prompt, init_db, get_agent_by_id, start_call_tracking, end_call_tracking, calculate_call_cost, calculate_call_revenue, get_user_credits, deduct_credits
 from prompt_api import router as prompt_router
 from fastapi import FastAPI, WebSocket, Request
@@ -22,6 +23,7 @@ from google_calendar import check_availability, create_appointment, list_appoint
 from datetime import datetime
 from slack_integration import notify_new_call, notify_call_ended
 from teams_integration import notify_new_call_teams, notify_call_ended_teams
+from elevenlabs_integration import stream_text_to_speech
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -57,6 +59,83 @@ LOG_EVENT_TYPES = {
 }
 
 app = FastAPI()
+
+
+# ========== ElevenLabs Voice Handler ==========
+
+class ElevenLabsVoiceHandler:
+    """
+    Handles ElevenLabs voice generation during live calls
+    Buffers text and generates speech in real-time
+    """
+    
+    def __init__(self, voice_id: str, websocket, stream_sid: str):
+        self.voice_id = voice_id
+        self.websocket = websocket
+        self.stream_sid = stream_sid
+        self.text_buffer = ""
+        logger.info(f"🎙️ ElevenLabsVoiceHandler initialized with voice: {voice_id}")
+    
+    async def handle_text_delta(self, text_delta: str):
+        """Buffer text and generate speech when ready"""
+        self.text_buffer += text_delta
+        
+        # Generate when we have a sentence
+        if self._should_generate_speech():
+            await self.generate_and_stream_speech()
+    
+    def _should_generate_speech(self) -> bool:
+        """Check if we should generate speech now"""
+        if not self.text_buffer.strip():
+            return False
+        
+        # Generate at sentence endings
+        if any(self.text_buffer.strip().endswith(p) for p in ['.', '!', '?', '。']):
+            return True
+        
+        # Or if buffer is getting long (>200 chars)
+        if len(self.text_buffer) > 200:
+            return True
+        
+        return False
+    
+    async def generate_and_stream_speech(self):
+        """Generate ElevenLabs speech and stream to caller"""
+        if not self.text_buffer.strip():
+            return
+        
+        text_to_speak = self.text_buffer.strip()
+        self.text_buffer = ""  # Clear buffer
+        
+        logger.info(f"🎤 ElevenLabs generating: {text_to_speak[:80]}...")
+        
+        try:
+            # Stream from ElevenLabs
+            for audio_chunk in stream_text_to_speech(
+                text=text_to_speak,
+                voice_id=self.voice_id,
+                model_id="eleven_turbo_v2_5",  # Fastest model
+                output_format="pcm_16000"  # 16kHz PCM (Twilio will convert)
+            ):
+                # Convert to base64 and send to Twilio
+                audio_b64 = base64.b64encode(audio_chunk).decode('utf-8')
+                
+                await self.websocket.send_text(json.dumps({
+                    "event": "media",
+                    "streamSid": self.stream_sid,
+                    "media": {
+                        "payload": audio_b64
+                    }
+                }))
+        
+        except Exception as e:
+            logger.error(f"❌ ElevenLabs TTS error: {e}")
+    
+    async def flush(self):
+        """Flush any remaining text in buffer"""
+        if self.text_buffer.strip():
+            await self.generate_and_stream_speech()
+
 
 @app.post("/incoming-call")
 async def incoming_call(request: Request):
@@ -223,6 +302,7 @@ async def handle_media_stream(websocket: WebSocket):
         response_start_timestamp_twilio = None
         first_message_sent = False  # Track if we've sent the greeting
         call_summary = None  # Store what happened during the call
+        elevenlabs_handler = None  # ElevenLabs voice handler (initialized when agent loads)
 
         async def send_mark():
             if not stream_sid:
@@ -421,6 +501,23 @@ async def handle_media_stream(websocket: WebSocket):
                                     agent_instructions = agent.get("system_prompt") or SYSTEM_MESSAGE
                                     agent_voice = agent.get("voice") or VOICE
                                     
+                                    # Check if using ElevenLabs voice
+                                    voice_provider = agent.get("voice_provider", "openai")
+                                    use_elevenlabs = voice_provider == "elevenlabs"
+                                    elevenlabs_voice_id = agent.get("elevenlabs_voice_id")
+                                    
+                                    if use_elevenlabs and elevenlabs_voice_id:
+                                        logger.info(f"🎙️ Using ElevenLabs voice provider (voice_id: {elevenlabs_voice_id})")
+                                        # Initialize ElevenLabs handler (will be used in receive_from_openai)
+                                        elevenlabs_handler = ElevenLabsVoiceHandler(
+                                            voice_id=elevenlabs_voice_id,
+                                            websocket=websocket,
+                                            stream_sid=stream_sid or "unknown"
+                                        )
+                                    else:
+                                        elevenlabs_handler = None
+                                        logger.info(f"🎤 Using OpenAI voice: {agent_voice}")
+                                    
                                     # Enforce English language unless specified otherwise in system prompt
                                     # Check if language is explicitly mentioned in the system prompt
                                     language_keywords = ['spanish', 'french', 'german', 'italian', 'portuguese', 'chinese', 'japanese', 'korean', 'arabic', 'hindi', 'language:', 'speak in', 'respond in']
@@ -499,7 +596,8 @@ async def handle_media_stream(websocket: WebSocket):
                                         openai_ws,
                                         instructions=agent_instructions,
                                         voice=agent_voice,
-                                        tools=agent_tools
+                                        tools=agent_tools,
+                                        use_elevenlabs=use_elevenlabs
                                     )
                                     logger.info("🔄 OpenAI session updated with agent config")
                                     
@@ -710,7 +808,7 @@ async def handle_media_stream(websocket: WebSocket):
                     pass
 
         async def send_to_twilio():
-            nonlocal response_start_timestamp_twilio, last_assistant_item
+            nonlocal response_start_timestamp_twilio, last_assistant_item, elevenlabs_handler
 
             try:
                 async for openai_message in openai_ws:
@@ -974,8 +1072,18 @@ async def handle_media_stream(websocket: WebSocket):
                         except Exception as e:
                             logger.error(f"❌ Function call error: {e}")
 
-                    # 1) Stream audio back to Twilio
-                    if rtype in ("response.output_audio.delta", "response.audio.delta"):
+                    # Handle text deltas for ElevenLabs
+                    if elevenlabs_handler and rtype == "response.text.delta":
+                        text_delta = resp.get("delta", "")
+                        if text_delta:
+                            await elevenlabs_handler.handle_text_delta(text_delta)
+                    
+                    # Handle text completion for ElevenLabs
+                    if elevenlabs_handler and rtype == "response.text.done":
+                        await elevenlabs_handler.flush()
+
+                    # 1) Stream audio back to Twilio (for OpenAI voices only)
+                    if not elevenlabs_handler and rtype in ("response.output_audio.delta", "response.audio.delta"):
                         audio_b64 = resp.get("delta")
                         if not audio_b64 or not stream_sid:
                             continue
@@ -1117,17 +1225,18 @@ def get_calendar_tools(agent_id: int) -> list:
     ]
 
 
-async def initialize_session(openai_ws, instructions: str, voice: str | None = None, tools: dict | None = None, first_message: str | None = None):
+async def initialize_session(openai_ws, instructions: str, voice: str | None = None, tools: dict | None = None, first_message: str | None = None, use_elevenlabs: bool = False):
     """
     Configure OpenAI Realtime session for Twilio Media Streams (G.711 u-law).
+    
+    Args:
+        use_elevenlabs: If True, configure for text output (ElevenLabs will handle TTS)
     """
     session_update = {
         "type": "session.update",
         "session": {
             "modalities": ["audio", "text"],
             "input_audio_format": "g711_ulaw",
-            "output_audio_format": "g711_ulaw",
-            "voice": voice or VOICE,
             "instructions": instructions,
             "turn_detection": {
                 "type": "server_vad",
@@ -1137,6 +1246,12 @@ async def initialize_session(openai_ws, instructions: str, voice: str | None = N
             },
         },
     }
+    
+    # If using ElevenLabs, we only want TEXT output from OpenAI
+    # If using OpenAI voices, we want AUDIO output
+    if not use_elevenlabs:
+        session_update["session"]["output_audio_format"] = "g711_ulaw"
+        session_update["session"]["voice"] = voice or VOICE
 
     if tools:
         session_update["session"]["tools"] = tools
