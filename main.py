@@ -592,14 +592,17 @@ async def handle_media_stream(websocket: WebSocket):
                                         agent_tools = None
                                     
                                     # Validate voice - if it's "string" or invalid, use default
-                                    valid_voices = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar']
-                                    if agent_voice not in valid_voices:
-                                        logger.warning(f"⚠️ Invalid voice '{agent_voice}', using default 'alloy'")
-                                        agent_voice = 'alloy'
+                                    # BUT: Skip validation if using ElevenLabs (voice field doesn't matter)
+                                    if not use_elevenlabs:
+                                        valid_voices = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar']
+                                        if agent_voice not in valid_voices:
+                                            logger.warning(f"⚠️ Invalid voice '{agent_voice}', using default 'alloy'")
+                                            agent_voice = 'alloy'
                                     
                                     logger.info(f"📝 System prompt loaded (length: {len(agent_instructions)} chars)")
                                     logger.info(f"📝 System prompt preview: {agent_instructions[:200]}...")
-                                    logger.info(f"🎙️ Using voice: {agent_voice}")
+                                    if not use_elevenlabs:
+                                        logger.info(f"🎙️ Using voice: {agent_voice}")
                                     
                                     # Send session.update to apply agent config
                                     await initialize_session(
