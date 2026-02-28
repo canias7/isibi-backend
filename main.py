@@ -605,7 +605,7 @@ async def handle_media_stream(websocket: WebSocket):
                                     await initialize_session(
                                         openai_ws,
                                         instructions=agent_instructions,
-                                        voice=agent_voice,
+                                        voice=None if use_elevenlabs else agent_voice,  # Don't set voice for ElevenLabs
                                         tools=agent_tools,
                                         use_elevenlabs=use_elevenlabs
                                     )
