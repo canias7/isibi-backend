@@ -5,6 +5,8 @@ import websockets
 import logging
 import base64
 import struct
+import numpy as np
+from scipy import signal
 from db import get_agent_prompt, init_db, get_agent_by_id, start_call_tracking, end_call_tracking, calculate_call_cost, calculate_call_revenue, get_user_credits, deduct_credits
 from prompt_api import router as prompt_router
 from fastapi import FastAPI, WebSocket, Request
@@ -66,60 +68,41 @@ app = FastAPI()
 
 def pcm16_to_ulaw(pcm_data: bytes) -> bytes:
     """
-    Convert 16-bit PCM to 8-bit μ-law
-    Simple implementation for telephony
+    Convert 16-bit PCM to 8-bit μ-law using proper algorithm
     """
-    # μ-law compression table (simplified)
-    BIAS = 0x84
-    CLIP = 32635
+    # Convert bytes to numpy array of 16-bit integers
+    pcm_array = np.frombuffer(pcm_data, dtype=np.int16)
     
-    ulaw_data = bytearray()
+    # Normalize to float
+    pcm_float = pcm_array.astype(np.float32) / 32768.0
     
-    # Process 2 bytes at a time (16-bit samples)
-    for i in range(0, len(pcm_data), 2):
-        if i + 1 >= len(pcm_data):
-            break
-            
-        # Get 16-bit sample (little-endian)
-        sample = struct.unpack('<h', pcm_data[i:i+2])[0]
-        
-        # Get sign and magnitude
-        sign = (sample >> 8) & 0x80
-        if sign != 0:
-            sample = -sample
-        if sample > CLIP:
-            sample = CLIP
-            
-        sample = sample + BIAS
-        exponent = 7
-        
-        # Find exponent
-        for exp in range(7, -1, -1):
-            if sample >= (1 << (exp + 3)):
-                exponent = exp
-                break
-        
-        mantissa = (sample >> (exponent + 3)) & 0x0F
-        ulaw_byte = ~(sign | (exponent << 4) | mantissa) & 0xFF
-        
-        ulaw_data.append(ulaw_byte)
+    # Apply μ-law compression
+    mu = 255
+    sign = np.sign(pcm_float)
+    magnitude = np.abs(pcm_float)
+    compressed = sign * np.log(1 + mu * magnitude) / np.log(1 + mu)
     
-    return bytes(ulaw_data)
+    # Convert back to 8-bit
+    ulaw_array = (compressed * 127).astype(np.int8)
+    
+    return ulaw_array.tobytes()
 
 
 def resample_16khz_to_8khz(pcm_16khz: bytes) -> bytes:
     """
-    Simple downsampling from 16kHz to 8kHz
-    Just takes every other sample
+    Proper resampling from 16kHz to 8kHz using scipy
     """
-    output = bytearray()
+    # Convert to numpy array
+    audio_16k = np.frombuffer(pcm_16khz, dtype=np.int16)
     
-    # Take every other 16-bit sample
-    for i in range(0, len(pcm_16khz), 4):  # 4 bytes = 2 samples
-        if i + 1 < len(pcm_16khz):
-            output.extend(pcm_16khz[i:i+2])
+    # Resample using scipy (high quality)
+    num_samples_8k = int(len(audio_16k) * 8000 / 16000)
+    audio_8k = signal.resample(audio_16k, num_samples_8k)
     
-    return bytes(output)
+    # Convert back to int16
+    audio_8k_int16 = audio_8k.astype(np.int16)
+    
+    return audio_8k_int16.tobytes()
 
 
 # ========== ElevenLabs Voice Handler ==========
@@ -187,10 +170,11 @@ class ElevenLabsVoiceHandler:
             
             # Combine all chunks
             pcm_16khz = b''.join(audio_chunks)
-            logger.info(f"🎵 Received {len(pcm_16khz)} bytes of PCM audio")
+            logger.info(f"🎵 Received {len(pcm_16khz)} bytes of PCM audio from ElevenLabs")
             
-            # Downsample from 16kHz to 8kHz
+            # Resample from 16kHz to 8kHz using scipy (high quality)
             pcm_8khz = resample_16khz_to_8khz(pcm_16khz)
+            logger.info(f"🔄 Resampled to {len(pcm_8khz)} bytes at 8kHz")
             
             # Convert to μ-law
             audio_ulaw = pcm16_to_ulaw(pcm_8khz)
@@ -198,6 +182,7 @@ class ElevenLabsVoiceHandler:
             
             # Send in chunks to Twilio (20ms chunks = 160 bytes at 8kHz μ-law)
             chunk_size = 160
+            chunks_sent = 0
             for i in range(0, len(audio_ulaw), chunk_size):
                 chunk = audio_ulaw[i:i + chunk_size]
                 audio_b64 = base64.b64encode(chunk).decode('utf-8')
@@ -209,9 +194,12 @@ class ElevenLabsVoiceHandler:
                         "payload": audio_b64
                     }
                 }))
+                chunks_sent += 1
                 
                 # Small delay to maintain timing (20ms per chunk)
                 await asyncio.sleep(0.02)
+            
+            logger.info(f"✅ Sent {chunks_sent} chunks to Twilio")
         
         except Exception as e:
             logger.error(f"❌ ElevenLabs TTS error: {e}")
