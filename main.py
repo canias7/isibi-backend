@@ -1251,7 +1251,7 @@ async def initialize_session(openai_ws, instructions: str, voice: str | None = N
     session_update = {
         "type": "session.update",
         "session": {
-            "modalities": ["audio", "text"],
+            "modalities": ["text"] if use_elevenlabs else ["audio", "text"],  # TEXT only for ElevenLabs!
             "input_audio_format": "g711_ulaw",
             "instructions": instructions,
             "turn_detection": {
