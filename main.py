@@ -506,6 +506,13 @@ async def handle_media_stream(websocket: WebSocket):
                                     use_elevenlabs = voice_provider == "elevenlabs"
                                     elevenlabs_voice_id = agent.get("elevenlabs_voice_id")
                                     
+                                    # DEBUG: Log what we found
+                                    logger.info(f"🔍 DEBUG - Agent voice config:")
+                                    logger.info(f"   voice_provider: {voice_provider}")
+                                    logger.info(f"   elevenlabs_voice_id: {elevenlabs_voice_id}")
+                                    logger.info(f"   use_elevenlabs: {use_elevenlabs}")
+                                    logger.info(f"   stream_sid: {stream_sid}")
+                                    
                                     if use_elevenlabs and elevenlabs_voice_id:
                                         logger.info(f"🎙️ Using ElevenLabs voice provider (voice_id: {elevenlabs_voice_id})")
                                         # Initialize ElevenLabs handler (will be used in receive_from_openai)
@@ -514,9 +521,12 @@ async def handle_media_stream(websocket: WebSocket):
                                             websocket=websocket,
                                             stream_sid=stream_sid or "unknown"
                                         )
+                                        logger.info(f"✅ ElevenLabsVoiceHandler initialized")
                                     else:
                                         elevenlabs_handler = None
                                         logger.info(f"🎤 Using OpenAI voice: {agent_voice}")
+                                        if use_elevenlabs:
+                                            logger.warning(f"⚠️ voice_provider is 'elevenlabs' but elevenlabs_voice_id is missing!")
                                     
                                     # Enforce English language unless specified otherwise in system prompt
                                     # Check if language is explicitly mentioned in the system prompt
@@ -1076,14 +1086,17 @@ async def handle_media_stream(websocket: WebSocket):
                     if elevenlabs_handler and rtype == "response.text.delta":
                         text_delta = resp.get("delta", "")
                         if text_delta:
+                            logger.debug(f"📝 ElevenLabs text delta: {text_delta[:50]}")
                             await elevenlabs_handler.handle_text_delta(text_delta)
                     
                     # Handle text completion for ElevenLabs
                     if elevenlabs_handler and rtype == "response.text.done":
+                        logger.info(f"✅ ElevenLabs text complete, flushing buffer")
                         await elevenlabs_handler.flush()
 
                     # 1) Stream audio back to Twilio (for OpenAI voices only)
                     if not elevenlabs_handler and rtype in ("response.output_audio.delta", "response.audio.delta"):
+                        logger.debug(f"🔊 OpenAI audio delta")
                         audio_b64 = resp.get("delta")
                         if not audio_b64 or not stream_sid:
                             continue
