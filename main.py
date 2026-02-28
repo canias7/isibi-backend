@@ -354,7 +354,7 @@ async def handle_media_stream(websocket: WebSocket):
             response_start_timestamp_twilio = None
 
         async def receive_from_twilio():
-            nonlocal stream_sid, latest_media_timestamp, response_start_timestamp_twilio, last_assistant_item, first_message_sent, agent_id, agent, first_message
+            nonlocal stream_sid, latest_media_timestamp, response_start_timestamp_twilio, last_assistant_item, first_message_sent, agent_id, agent, first_message, use_elevenlabs, elevenlabs_handler
 
             try:
                 async for message in websocket.iter_text():
