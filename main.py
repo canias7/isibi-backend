@@ -831,6 +831,10 @@ async def handle_media_stream(websocket: WebSocket):
                     if rtype in LOG_EVENT_TYPES:
                         print("OpenAI event:", rtype)
                     
+                    # Log ALL response types when using ElevenLabs (for debugging)
+                    if elevenlabs_handler and rtype and rtype.startswith("response"):
+                        logger.info(f"🔍 OpenAI response type: {rtype}")
+                    
                     # Log errors with full details
                     if rtype == "error":
                         error_details = resp.get("error", {})
@@ -1089,7 +1093,7 @@ async def handle_media_stream(websocket: WebSocket):
                     if elevenlabs_handler and rtype == "response.text.delta":
                         text_delta = resp.get("delta", "")
                         if text_delta:
-                            logger.debug(f"📝 ElevenLabs text delta: {text_delta[:50]}")
+                            logger.info(f"📝 ElevenLabs text delta: {text_delta[:50]}")
                             await elevenlabs_handler.handle_text_delta(text_delta)
                     
                     # Handle text completion for ElevenLabs
@@ -1099,7 +1103,7 @@ async def handle_media_stream(websocket: WebSocket):
 
                     # 1) Stream audio back to Twilio (for OpenAI voices only)
                     if not elevenlabs_handler and rtype in ("response.output_audio.delta", "response.audio.delta"):
-                        logger.debug(f"🔊 OpenAI audio delta")
+                        logger.info(f"🔊 OpenAI audio delta")
                         audio_b64 = resp.get("delta")
                         if not audio_b64 or not stream_sid:
                             continue
