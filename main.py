@@ -303,6 +303,7 @@ async def handle_media_stream(websocket: WebSocket):
         first_message_sent = False  # Track if we've sent the greeting
         call_summary = None  # Store what happened during the call
         elevenlabs_handler = None  # ElevenLabs voice handler (initialized when agent loads)
+        use_elevenlabs = False  # Flag to indicate if using ElevenLabs (set when agent loads)
 
         async def send_mark():
             if not stream_sid:
@@ -522,6 +523,7 @@ async def handle_media_stream(websocket: WebSocket):
                                             stream_sid=stream_sid or "unknown"
                                         )
                                         logger.info(f"✅ ElevenLabsVoiceHandler initialized")
+                                        logger.info(f"🔍 DEBUG: elevenlabs_handler is now {elevenlabs_handler}")
                                     else:
                                         elevenlabs_handler = None
                                         logger.info(f"🎤 Using OpenAI voice: {agent_voice}")
@@ -818,7 +820,7 @@ async def handle_media_stream(websocket: WebSocket):
                     pass
 
         async def send_to_twilio():
-            nonlocal response_start_timestamp_twilio, last_assistant_item, elevenlabs_handler
+            nonlocal response_start_timestamp_twilio, last_assistant_item, elevenlabs_handler, use_elevenlabs
 
             try:
                 async for openai_message in openai_ws:
@@ -1087,26 +1089,27 @@ async def handle_media_stream(websocket: WebSocket):
                             logger.error(f"❌ Function call error: {e}")
 
                     # Handle audio transcripts for ElevenLabs (NEW APPROACH)
-                    if elevenlabs_handler and rtype == "response.audio_transcript.delta":
+                    if use_elevenlabs and rtype == "response.audio_transcript.delta":
                         transcript_delta = resp.get("delta", "")
-                        if transcript_delta:
+                        if transcript_delta and elevenlabs_handler:
                             logger.info(f"📝 ElevenLabs transcript delta: {transcript_delta[:50]}")
                             await elevenlabs_handler.handle_text_delta(transcript_delta)
                     
                     # Handle transcript completion for ElevenLabs
-                    if elevenlabs_handler and rtype == "response.audio_transcript.done":
-                        logger.info(f"✅ ElevenLabs transcript complete, flushing buffer")
-                        await elevenlabs_handler.flush()
+                    if use_elevenlabs and rtype == "response.audio_transcript.done":
+                        if elevenlabs_handler:
+                            logger.info(f"✅ ElevenLabs transcript complete, flushing buffer")
+                            await elevenlabs_handler.flush()
 
                     # Stream audio back to Twilio (only for OpenAI voices, block for ElevenLabs)
                     if rtype in ("response.output_audio.delta", "response.audio.delta"):
-                        if elevenlabs_handler:
+                        if use_elevenlabs:
                             # Block OpenAI audio when using ElevenLabs (we'll use the transcript instead)
                             logger.info(f"🚫 Blocking OpenAI audio (using ElevenLabs)")
                             continue
                         else:
                             # For OpenAI voices: send audio to caller
-                            logger.info(f"🔊 OpenAI audio delta (elevenlabs_handler={elevenlabs_handler})")
+                            logger.info(f"🔊 OpenAI audio delta (use_elevenlabs={use_elevenlabs})")
                         audio_b64 = resp.get("delta")
                         if not audio_b64 or not stream_sid:
                             continue
