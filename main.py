@@ -591,24 +591,21 @@ async def handle_media_stream(websocket: WebSocket):
                                     if not agent_tools:
                                         agent_tools = None
                                     
-                                    # Validate voice - if it's "string" or invalid, use default
-                                    # BUT: Skip validation if using ElevenLabs (voice field doesn't matter)
-                                    if not use_elevenlabs:
-                                        valid_voices = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar']
-                                        if agent_voice not in valid_voices:
-                                            logger.warning(f"⚠️ Invalid voice '{agent_voice}', using default 'alloy'")
-                                            agent_voice = 'alloy'
+                                    # Validate voice - always validate since we're using audio mode
+                                    valid_voices = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar']
+                                    if agent_voice not in valid_voices:
+                                        logger.warning(f"⚠️ Invalid voice '{agent_voice}', using default 'alloy'")
+                                        agent_voice = 'alloy'
                                     
                                     logger.info(f"📝 System prompt loaded (length: {len(agent_instructions)} chars)")
                                     logger.info(f"📝 System prompt preview: {agent_instructions[:200]}...")
-                                    if not use_elevenlabs:
-                                        logger.info(f"🎙️ Using voice: {agent_voice}")
+                                    logger.info(f"🎙️ Using voice: {agent_voice}")
                                     
                                     # Send session.update to apply agent config
                                     await initialize_session(
                                         openai_ws,
                                         instructions=agent_instructions,
-                                        voice=None if use_elevenlabs else agent_voice,  # Don't set voice for ElevenLabs
+                                        voice=agent_voice,  # Always pass voice (needed for audio mode)
                                         tools=agent_tools,
                                         use_elevenlabs=use_elevenlabs
                                     )
@@ -629,14 +626,11 @@ async def handle_media_stream(websocket: WebSocket):
                         if not first_message_sent:
                             logger.info(f"📢 Triggering automatic greeting from system prompt")
                             
-                            # Set modalities based on voice provider
-                            greeting_modalities = ["text"] if elevenlabs_handler else ["text", "audio"]
-                            
-                            # Trigger the AI to start speaking immediately using the greeting from its system prompt
+                            # Always use audio modalities (we'll intercept and use transcript for ElevenLabs)
                             await openai_ws.send(json.dumps({
                                 "type": "response.create",
                                 "response": {
-                                    "modalities": greeting_modalities,
+                                    "modalities": ["text", "audio"],
                                     "instructions": "Greet the caller now using the greeting from Section 2 of your system prompt."
                                 }
                             }))
@@ -1092,20 +1086,26 @@ async def handle_media_stream(websocket: WebSocket):
                         except Exception as e:
                             logger.error(f"❌ Function call error: {e}")
 
-                    # Handle text deltas for ElevenLabs
-                    if elevenlabs_handler and rtype == "response.text.delta":
-                        text_delta = resp.get("delta", "")
-                        if text_delta:
-                            logger.info(f"📝 ElevenLabs text delta: {text_delta[:50]}")
-                            await elevenlabs_handler.handle_text_delta(text_delta)
+                    # Handle audio transcripts for ElevenLabs (NEW APPROACH)
+                    if elevenlabs_handler and rtype == "response.audio_transcript.delta":
+                        transcript_delta = resp.get("delta", "")
+                        if transcript_delta:
+                            logger.info(f"📝 ElevenLabs transcript delta: {transcript_delta[:50]}")
+                            await elevenlabs_handler.handle_text_delta(transcript_delta)
                     
-                    # Handle text completion for ElevenLabs
-                    if elevenlabs_handler and rtype == "response.text.done":
-                        logger.info(f"✅ ElevenLabs text complete, flushing buffer")
+                    # Handle transcript completion for ElevenLabs
+                    if elevenlabs_handler and rtype == "response.audio_transcript.done":
+                        logger.info(f"✅ ElevenLabs transcript complete, flushing buffer")
                         await elevenlabs_handler.flush()
 
-                    # 1) Stream audio back to Twilio (for OpenAI voices only)
-                    if not elevenlabs_handler and rtype in ("response.output_audio.delta", "response.audio.delta"):
+                    # Stream audio back to Twilio (only for OpenAI voices, block for ElevenLabs)
+                    if rtype in ("response.output_audio.delta", "response.audio.delta"):
+                        if elevenlabs_handler:
+                            # Block OpenAI audio when using ElevenLabs (we'll use the transcript instead)
+                            logger.info(f"🚫 Blocking OpenAI audio (using ElevenLabs)")
+                            continue
+                        
+                        # For OpenAI voices: send audio to caller
                         logger.info(f"🔊 OpenAI audio delta")
                         audio_b64 = resp.get("delta")
                         if not audio_b64 or not stream_sid:
@@ -1253,28 +1253,27 @@ async def initialize_session(openai_ws, instructions: str, voice: str | None = N
     Configure OpenAI Realtime session for Twilio Media Streams (G.711 u-law).
     
     Args:
-        use_elevenlabs: If True, configure for text output (ElevenLabs will handle TTS)
+        use_elevenlabs: If True, we'll use audio transcripts for ElevenLabs TTS
     """
     session_update = {
         "type": "session.update",
         "session": {
-            "modalities": ["text"] if use_elevenlabs else ["audio", "text"],  # TEXT only for ElevenLabs!
+            "modalities": ["text", "audio"],  # Always use both (OpenAI Realtime requires audio)
             "input_audio_format": "g711_ulaw",
+            "output_audio_format": "g711_ulaw",  # Always output audio
+            "input_audio_transcription": {"model": "whisper-1"},  # Enable transcription
             "instructions": instructions,
             "turn_detection": {
                 "type": "server_vad",
-                "threshold": 0.7,  # Higher = less sensitive to background noise (0.5 default, 0.7-0.8 for noisy environments)
-                "prefix_padding_ms": 300,  # Audio to include before speech starts
-                "silence_duration_ms": 800  # Wait longer before considering speech finished (reduces false interruptions)
+                "threshold": 0.7,
+                "prefix_padding_ms": 300,
+                "silence_duration_ms": 800
             },
         },
     }
     
-    # If using ElevenLabs, we only want TEXT output from OpenAI
-    # If using OpenAI voices, we want AUDIO output
-    if not use_elevenlabs:
-        session_update["session"]["output_audio_format"] = "g711_ulaw"
-        session_update["session"]["voice"] = voice or VOICE
+    # Set voice for OpenAI (required even for ElevenLabs mode)
+    session_update["session"]["voice"] = voice or VOICE
 
     if tools:
         session_update["session"]["tools"] = tools
