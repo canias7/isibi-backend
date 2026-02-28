@@ -4,7 +4,8 @@ import asyncio
 import websockets
 import logging
 import base64
-import audioop  # For PCM to μ-law conversion
+from pydub import AudioSegment
+from io import BytesIO
 from db import get_agent_prompt, init_db, get_agent_by_id, start_call_tracking, end_call_tracking, calculate_call_cost, calculate_call_revenue, get_user_credits, deduct_credits
 from prompt_api import router as prompt_router
 from fastapi import FastAPI, WebSocket, Request
@@ -111,22 +112,43 @@ class ElevenLabsVoiceHandler:
         logger.info(f"🎤 ElevenLabs generating: {text_to_speak[:80]}...")
         
         try:
-            # Stream from ElevenLabs
-            for audio_chunk in stream_text_to_speech(
+            # Collect all audio chunks from ElevenLabs
+            audio_chunks = []
+            for chunk in stream_text_to_speech(
                 text=text_to_speak,
                 voice_id=self.voice_id,
-                model_id="eleven_turbo_v2_5",  # Fastest model
+                model_id="eleven_turbo_v2_5",
                 output_format="pcm_16000"  # 16kHz PCM
             ):
-                # Convert PCM to μ-law (Twilio expects 8kHz μ-law)
-                # First, resample from 16kHz to 8kHz
-                audio_8khz = audioop.ratecv(audio_chunk, 2, 1, 16000, 8000, None)[0]
-                
-                # Then convert to μ-law
-                audio_ulaw = audioop.lin2ulaw(audio_8khz, 2)
-                
-                # Encode to base64 and send to Twilio
-                audio_b64 = base64.b64encode(audio_ulaw).decode('utf-8')
+                audio_chunks.append(chunk)
+            
+            if not audio_chunks:
+                return
+            
+            # Combine chunks
+            pcm_audio = b''.join(audio_chunks)
+            
+            # Convert PCM to AudioSegment (16kHz, 16-bit, mono)
+            audio = AudioSegment(
+                data=pcm_audio,
+                sample_width=2,  # 16-bit = 2 bytes
+                frame_rate=16000,
+                channels=1
+            )
+            
+            # Resample to 8kHz (Twilio requirement)
+            audio = audio.set_frame_rate(8000)
+            
+            # Export as μ-law
+            buffer = BytesIO()
+            audio.export(buffer, format="mulaw", codec="pcm_mulaw")
+            audio_ulaw = buffer.getvalue()
+            
+            # Send in chunks to Twilio (20ms chunks = 160 bytes at 8kHz μ-law)
+            chunk_size = 160
+            for i in range(0, len(audio_ulaw), chunk_size):
+                chunk = audio_ulaw[i:i + chunk_size]
+                audio_b64 = base64.b64encode(chunk).decode('utf-8')
                 
                 await self.websocket.send_text(json.dumps({
                     "event": "media",
@@ -135,9 +157,14 @@ class ElevenLabsVoiceHandler:
                         "payload": audio_b64
                     }
                 }))
+                
+                # Small delay to maintain timing
+                await asyncio.sleep(0.02)  # 20ms
         
         except Exception as e:
             logger.error(f"❌ ElevenLabs TTS error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     async def flush(self):
         """Flush any remaining text in buffer"""
