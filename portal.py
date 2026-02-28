@@ -45,6 +45,8 @@ class CreateAgentRequest(BaseModel):
 
     # voice section
     voice: Optional[str] = None
+    voice_provider: Optional[str] = "openai"  # NEW: openai or elevenlabs
+    elevenlabs_voice_id: Optional[str] = None  # NEW: ElevenLabs voice ID
 
     # tools section
     tools: Optional[ToolsModel] = None
@@ -65,6 +67,8 @@ class UpdateAgentRequest(BaseModel):
     system_prompt: Optional[str] = None
     provider: Optional[str] = None
     voice: Optional[str] = None
+    voice_provider: Optional[str] = None  # NEW: openai or elevenlabs
+    elevenlabs_voice_id: Optional[str] = None  # NEW: ElevenLabs voice ID
     tools: Optional[ToolsModel] = None
 
 class PurchaseCreditsRequest(BaseModel):
@@ -129,6 +133,8 @@ def api_create_agent(payload: CreateAgentRequest, user=Depends(verify_token)):
         system_prompt=payload.system_prompt,
         provider=payload.provider,
         voice=payload.voice,
+        voice_provider=payload.voice_provider or "openai",  # NEW
+        elevenlabs_voice_id=payload.elevenlabs_voice_id,  # NEW
         tools=(payload.tools.model_dump() if payload.tools else {}),
         twilio_number_sid=payload.twilio_number_sid,
     )
@@ -193,6 +199,8 @@ def api_update_agent(agent_id: int, payload: UpdateAgentRequest, user=Depends(ve
         system_prompt=payload.system_prompt,
         provider=payload.provider,
         voice=payload.voice,
+        voice_provider=payload.voice_provider,  # NEW
+        elevenlabs_voice_id=payload.elevenlabs_voice_id,  # NEW
         tools=(payload.tools.model_dump() if payload.tools else None),
     )
 

@@ -475,6 +475,8 @@ def create_agent(
     system_prompt: str = "",
     business_name: str = None,
     voice: str = None,
+    voice_provider: str = "openai",  # NEW: default to openai
+    elevenlabs_voice_id: str = None,  # NEW: ElevenLabs voice ID
     provider: str = None,
     first_message: str = None,
     tools: dict = None,   # example: {"google_calendar": True, "slack": False}
@@ -494,12 +496,14 @@ def create_agent(
             phone_number,
             system_prompt,
             voice,
+            voice_provider,
+            elevenlabs_voice_id,
             provider,
             first_message,
             tools_json,
             twilio_number_sid
         )
-        VALUES ({PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH})
+        VALUES ({PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH})
         """ + (" RETURNING id" if USE_POSTGRES else "")),
         (
             owner_user_id,
@@ -508,6 +512,8 @@ def create_agent(
             phone_number,
             system_prompt,
             voice,
+            voice_provider,
+            elevenlabs_voice_id,
             provider,
             first_message,
             tools_json,
@@ -644,6 +650,8 @@ def update_agent(owner_user_id: int, agent_id: int, **fields):
         "phone_number",
         "system_prompt",
         "voice",
+        "voice_provider",  # NEW: openai or elevenlabs
+        "elevenlabs_voice_id",  # NEW: ElevenLabs voice ID
         "provider",
         "first_message",
         "tools_json",   # store JSON string
