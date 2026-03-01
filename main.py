@@ -129,6 +129,14 @@ class ElevenLabsVoiceHandler:
             pcm_16khz = b''.join(audio_chunks)
             logger.info(f"🎵 Received {len(pcm_16khz)} bytes of PCM audio from ElevenLabs")
             
+            # Ensure we have a whole number of frames (2 bytes per sample for 16-bit)
+            # Pad with zeros if needed
+            frame_size = 2  # 16-bit = 2 bytes
+            if len(pcm_16khz) % frame_size != 0:
+                padding_needed = frame_size - (len(pcm_16khz) % frame_size)
+                pcm_16khz += b'\x00' * padding_needed
+                logger.info(f"🔧 Padded audio with {padding_needed} bytes")
+            
             # Resample from 16kHz to 8kHz using audioop.ratecv
             # ratecv(fragment, width, nchannels, inrate, outrate, state)
             pcm_8khz, _ = audioop.ratecv(pcm_16khz, 2, 1, 16000, 8000, None)
