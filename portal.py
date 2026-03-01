@@ -2052,9 +2052,16 @@ def disable_elevenlabs(user=Depends(verify_token)):
 
 
 @router.put("/agents/{agent_id}/voice")
-def set_agent_voice(agent_id: int, voice_id: str, user=Depends(verify_token)):
+def set_agent_voice(agent_id: int, payload: dict, user=Depends(verify_token)):
     """
-    Set ElevenLabs voice for an agent
+    Set voice for an agent (OpenAI or ElevenLabs)
+    
+    Body:
+    {
+        "voice_provider": "openai" or "elevenlabs",
+        "elevenlabs_voice_id": "voice_id" (if using ElevenLabs),
+        "openai_voice": "alloy" (if using OpenAI)
+    }
     """
     from db import get_conn, sql
     conn = get_conn()
@@ -2071,12 +2078,19 @@ def set_agent_voice(agent_id: int, voice_id: str, user=Depends(verify_token)):
         conn.close()
         raise HTTPException(status_code=404, detail="Agent not found")
     
-    # Update voice
+    # Get voice provider
+    voice_provider = payload.get("voice_provider", "openai")
+    elevenlabs_voice_id = payload.get("elevenlabs_voice_id")
+    openai_voice = payload.get("openai_voice", "alloy")
+    
+    # Update voice settings
     cur.execute(sql("""
         UPDATE agents
-        SET elevenlabs_voice_id = {PH}
+        SET voice_provider = {PH},
+            elevenlabs_voice_id = {PH},
+            voice = {PH}
         WHERE id = {PH}
-    """), (voice_id, agent_id))
+    """), (voice_provider, elevenlabs_voice_id, openai_voice, agent_id))
     
     conn.commit()
     conn.close()
@@ -2084,7 +2098,9 @@ def set_agent_voice(agent_id: int, voice_id: str, user=Depends(verify_token)):
     return {
         "success": True,
         "message": "Voice updated",
-        "voice_id": voice_id
+        "voice_provider": voice_provider,
+        "elevenlabs_voice_id": elevenlabs_voice_id,
+        "openai_voice": openai_voice
     }
 
 
