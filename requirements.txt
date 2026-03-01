@@ -61,5 +61,3 @@ squareup==35.1.0.20240320
 sendgrid==6.11.0
 reportlab==4.2.5
 
--e numpy==2.2.4
-scipy==1.15.1

@@ -4,9 +4,7 @@ import asyncio
 import websockets
 import logging
 import base64
-import struct
-import numpy as np
-from scipy import signal
+import audioop  # Built-in module (Python 3.11)
 from db import get_agent_prompt, init_db, get_agent_by_id, start_call_tracking, end_call_tracking, calculate_call_cost, calculate_call_revenue, get_user_credits, deduct_credits
 from prompt_api import router as prompt_router
 from fastapi import FastAPI, WebSocket, Request
@@ -62,47 +60,6 @@ LOG_EVENT_TYPES = {
 }
 
 app = FastAPI()
-
-
-# ========== Audio Conversion Functions ==========
-
-def pcm16_to_ulaw(pcm_data: bytes) -> bytes:
-    """
-    Convert 16-bit PCM to 8-bit μ-law using proper algorithm
-    """
-    # Convert bytes to numpy array of 16-bit integers
-    pcm_array = np.frombuffer(pcm_data, dtype=np.int16)
-    
-    # Normalize to float
-    pcm_float = pcm_array.astype(np.float32) / 32768.0
-    
-    # Apply μ-law compression
-    mu = 255
-    sign = np.sign(pcm_float)
-    magnitude = np.abs(pcm_float)
-    compressed = sign * np.log(1 + mu * magnitude) / np.log(1 + mu)
-    
-    # Convert back to 8-bit
-    ulaw_array = (compressed * 127).astype(np.int8)
-    
-    return ulaw_array.tobytes()
-
-
-def resample_16khz_to_8khz(pcm_16khz: bytes) -> bytes:
-    """
-    Proper resampling from 16kHz to 8kHz using scipy
-    """
-    # Convert to numpy array
-    audio_16k = np.frombuffer(pcm_16khz, dtype=np.int16)
-    
-    # Resample using scipy (high quality)
-    num_samples_8k = int(len(audio_16k) * 8000 / 16000)
-    audio_8k = signal.resample(audio_16k, num_samples_8k)
-    
-    # Convert back to int16
-    audio_8k_int16 = audio_8k.astype(np.int16)
-    
-    return audio_8k_int16.tobytes()
 
 
 # ========== ElevenLabs Voice Handler ==========
@@ -172,12 +129,13 @@ class ElevenLabsVoiceHandler:
             pcm_16khz = b''.join(audio_chunks)
             logger.info(f"🎵 Received {len(pcm_16khz)} bytes of PCM audio from ElevenLabs")
             
-            # Resample from 16kHz to 8kHz using scipy (high quality)
-            pcm_8khz = resample_16khz_to_8khz(pcm_16khz)
+            # Resample from 16kHz to 8kHz using audioop.ratecv
+            # ratecv(fragment, width, nchannels, inrate, outrate, state)
+            pcm_8khz, _ = audioop.ratecv(pcm_16khz, 2, 1, 16000, 8000, None)
             logger.info(f"🔄 Resampled to {len(pcm_8khz)} bytes at 8kHz")
             
-            # Convert to μ-law
-            audio_ulaw = pcm16_to_ulaw(pcm_8khz)
+            # Convert to μ-law using audioop.lin2ulaw
+            audio_ulaw = audioop.lin2ulaw(pcm_8khz, 2)
             logger.info(f"🔊 Converted to {len(audio_ulaw)} bytes of μ-law audio")
             
             # Send in chunks to Twilio (20ms chunks = 160 bytes at 8kHz μ-law)
