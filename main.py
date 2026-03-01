@@ -128,6 +128,7 @@ class ElevenLabsVoiceHandler:
             # Combine all chunks
             pcm_16khz = b''.join(audio_chunks)
             logger.info(f"🎵 Received {len(pcm_16khz)} bytes of PCM audio from ElevenLabs")
+            logger.info(f"🔍 First 20 bytes (hex): {pcm_16khz[:20].hex()}")
             
             # Ensure we have a whole number of frames (2 bytes per sample for 16-bit)
             # Pad with zeros if needed
@@ -139,16 +140,22 @@ class ElevenLabsVoiceHandler:
             
             # Resample from 16kHz to 8kHz using audioop.ratecv
             # ratecv(fragment, width, nchannels, inrate, outrate, state)
-            pcm_8khz, _ = audioop.ratecv(pcm_16khz, 2, 1, 16000, 8000, None)
+            # width=2 (16-bit), nchannels=1 (mono), inrate=16000, outrate=8000
+            pcm_8khz, state = audioop.ratecv(pcm_16khz, 2, 1, 16000, 8000, None)
             logger.info(f"🔄 Resampled to {len(pcm_8khz)} bytes at 8kHz")
+            logger.info(f"🔍 Resampled first 20 bytes (hex): {pcm_8khz[:20].hex()}")
             
             # Convert to μ-law using audioop.lin2ulaw
+            # lin2ulaw(fragment, width) where width=2 for 16-bit samples
             audio_ulaw = audioop.lin2ulaw(pcm_8khz, 2)
             logger.info(f"🔊 Converted to {len(audio_ulaw)} bytes of μ-law audio")
+            logger.info(f"🔍 μ-law first 20 bytes (hex): {audio_ulaw[:20].hex()}")
             
             # Send in chunks to Twilio (20ms chunks = 160 bytes at 8kHz μ-law)
             chunk_size = 160
             chunks_sent = 0
+            
+            # Send all chunks without delay - Twilio will buffer and play properly
             for i in range(0, len(audio_ulaw), chunk_size):
                 chunk = audio_ulaw[i:i + chunk_size]
                 audio_b64 = base64.b64encode(chunk).decode('utf-8')
@@ -161,9 +168,6 @@ class ElevenLabsVoiceHandler:
                     }
                 }))
                 chunks_sent += 1
-                
-                # Small delay to maintain timing (20ms per chunk)
-                await asyncio.sleep(0.02)
             
             logger.info(f"✅ Sent {chunks_sent} chunks to Twilio")
         
