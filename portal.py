@@ -2060,6 +2060,7 @@ def set_agent_voice(agent_id: int, payload: dict, user=Depends(verify_token)):
     {
         "voice_provider": "openai" or "elevenlabs",
         "elevenlabs_voice_id": "voice_id" (if using ElevenLabs),
+        "voice_id": "voice_id" (alternative field name),
         "openai_voice": "alloy" (if using OpenAI)
     }
     """
@@ -2080,17 +2081,43 @@ def set_agent_voice(agent_id: int, payload: dict, user=Depends(verify_token)):
     
     # Get voice provider
     voice_provider = payload.get("voice_provider", "openai")
-    elevenlabs_voice_id = payload.get("elevenlabs_voice_id")
-    openai_voice = payload.get("openai_voice", "alloy")
+    
+    # Handle different field names for voice ID
+    elevenlabs_voice_id = (
+        payload.get("elevenlabs_voice_id") or 
+        payload.get("voice_id") or 
+        None
+    )
+    
+    openai_voice = payload.get("openai_voice") or "alloy"
+    
+    # If using ElevenLabs, make sure we have a voice ID
+    if voice_provider == "elevenlabs" and not elevenlabs_voice_id:
+        conn.close()
+        raise HTTPException(
+            status_code=400, 
+            detail="elevenlabs_voice_id is required when using ElevenLabs"
+        )
     
     # Update voice settings
-    cur.execute(sql("""
-        UPDATE agents
-        SET voice_provider = {PH},
-            elevenlabs_voice_id = {PH},
-            voice = {PH}
-        WHERE id = {PH}
-    """), (voice_provider, elevenlabs_voice_id, openai_voice, agent_id))
+    # When using ElevenLabs, set voice to None (it uses elevenlabs_voice_id)
+    # When using OpenAI, set elevenlabs_voice_id to None (it uses voice)
+    if voice_provider == "elevenlabs":
+        cur.execute(sql("""
+            UPDATE agents
+            SET voice_provider = {PH},
+                elevenlabs_voice_id = {PH},
+                voice = NULL
+            WHERE id = {PH}
+        """), (voice_provider, elevenlabs_voice_id, agent_id))
+    else:  # OpenAI
+        cur.execute(sql("""
+            UPDATE agents
+            SET voice_provider = {PH},
+                elevenlabs_voice_id = NULL,
+                voice = {PH}
+            WHERE id = {PH}
+        """), (voice_provider, openai_voice, agent_id))
     
     conn.commit()
     conn.close()
@@ -2099,8 +2126,8 @@ def set_agent_voice(agent_id: int, payload: dict, user=Depends(verify_token)):
         "success": True,
         "message": "Voice updated",
         "voice_provider": voice_provider,
-        "elevenlabs_voice_id": elevenlabs_voice_id,
-        "openai_voice": openai_voice
+        "elevenlabs_voice_id": elevenlabs_voice_id if voice_provider == "elevenlabs" else None,
+        "openai_voice": openai_voice if voice_provider == "openai" else None
     }
 
 
