@@ -5,6 +5,8 @@ import websockets
 import logging
 import base64
 import audioop  # Built-in module (Python 3.11)
+import io
+from pydub import AudioSegment
 from db import get_agent_prompt, init_db, get_agent_by_id, start_call_tracking, end_call_tracking, calculate_call_cost, calculate_call_revenue, get_user_credits, deduct_credits
 from prompt_api import router as prompt_router
 from fastapi import FastAPI, WebSocket, Request
@@ -117,7 +119,7 @@ class ElevenLabsVoiceHandler:
                 text=text_to_speak,
                 voice_id=self.voice_id,
                 model_id="eleven_turbo_v2_5",
-                output_format="pcm_16000"  # 16kHz PCM, 16-bit
+                output_format="mp3_44100_128"  # Use MP3 since PCM isn't working
             ):
                 audio_chunks.append(chunk)
             
@@ -126,30 +128,26 @@ class ElevenLabsVoiceHandler:
                 return
             
             # Combine all chunks
-            pcm_16khz = b''.join(audio_chunks)
-            logger.info(f"🎵 Received {len(pcm_16khz)} bytes of PCM audio from ElevenLabs")
-            logger.info(f"🔍 First 20 bytes (hex): {pcm_16khz[:20].hex()}")
+            mp3_audio = b''.join(audio_chunks)
+            logger.info(f"🎵 Received {len(mp3_audio)} bytes of MP3 audio from ElevenLabs")
             
-            # Ensure we have a whole number of frames (2 bytes per sample for 16-bit)
-            # Pad with zeros if needed
-            frame_size = 2  # 16-bit = 2 bytes
-            if len(pcm_16khz) % frame_size != 0:
-                padding_needed = frame_size - (len(pcm_16khz) % frame_size)
-                pcm_16khz += b'\x00' * padding_needed
-                logger.info(f"🔧 Padded audio with {padding_needed} bytes")
+            # Decode MP3 to PCM using pydub
+            audio_segment = AudioSegment.from_mp3(io.BytesIO(mp3_audio))
             
-            # Resample from 16kHz to 8kHz using audioop.ratecv
-            # ratecv(fragment, width, nchannels, inrate, outrate, state)
-            # width=2 (16-bit), nchannels=1 (mono), inrate=16000, outrate=8000
-            pcm_8khz, state = audioop.ratecv(pcm_16khz, 2, 1, 16000, 8000, None)
-            logger.info(f"🔄 Resampled to {len(pcm_8khz)} bytes at 8kHz")
-            logger.info(f"🔍 Resampled first 20 bytes (hex): {pcm_8khz[:20].hex()}")
+            # Convert to mono if stereo
+            if audio_segment.channels > 1:
+                audio_segment = audio_segment.set_channels(1)
+            
+            # Resample to 8kHz
+            audio_segment = audio_segment.set_frame_rate(8000)
+            
+            # Get raw PCM data (16-bit)
+            pcm_8khz = audio_segment.raw_data
+            logger.info(f"🔄 Decoded and resampled to {len(pcm_8khz)} bytes at 8kHz")
             
             # Convert to μ-law using audioop.lin2ulaw
-            # lin2ulaw(fragment, width) where width=2 for 16-bit samples
             audio_ulaw = audioop.lin2ulaw(pcm_8khz, 2)
             logger.info(f"🔊 Converted to {len(audio_ulaw)} bytes of μ-law audio")
-            logger.info(f"🔍 μ-law first 20 bytes (hex): {audio_ulaw[:20].hex()}")
             
             # Send in chunks to Twilio (20ms chunks = 160 bytes at 8kHz μ-law)
             chunk_size = 160
