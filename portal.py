@@ -1535,20 +1535,52 @@ Generate the complete system prompt now:"""
 class RefinePromptRequest(BaseModel):
     current_prompt: str
     refinement_instructions: str
+    
+    # Add validators to ensure fields aren't empty
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "current_prompt": "Your current system prompt here...",
+                "refinement_instructions": "Make it more friendly"
+            }
+        }
 
 @router.post("/agents/refine-prompt-ai")
-def refine_prompt_with_ai(payload: RefinePromptRequest, user=Depends(verify_token)):
+async def refine_prompt_with_ai(payload: RefinePromptRequest, user=Depends(verify_token)):
     """
     Refine an existing prompt based on user instructions
     
     Example instructions:
     - "Make it more friendly"
-    - "Add a section about handling complaints"
+    - "Add a section about handling complaints"  
     - "Make it shorter and more concise"
     - "Add examples for appointment scheduling"
     """
     import anthropic
     import os
+    import logging
+    
+    logger = logging.getLogger("main")
+    
+    try:
+        logger.info(f"🎨 Refine request received:")
+        logger.info(f"   Current prompt length: {len(payload.current_prompt)}")
+        logger.info(f"   Instructions: {payload.refinement_instructions[:100] if len(payload.refinement_instructions) > 100 else payload.refinement_instructions}")
+    except Exception as e:
+        logger.error(f"Error logging request: {e}")
+    
+    # Validate inputs
+    if not payload.current_prompt or not payload.current_prompt.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="current_prompt is required and cannot be empty"
+        )
+    
+    if not payload.refinement_instructions or not payload.refinement_instructions.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="refinement_instructions is required and cannot be empty"
+        )
     
     # Check if Anthropic API key is configured
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
