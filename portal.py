@@ -1530,6 +1530,87 @@ Generate the complete system prompt now:"""
         )
 
 
+# ========== AI Prompt Refinement Endpoint ==========
+
+class RefinePromptRequest(BaseModel):
+    current_prompt: str
+    refinement_instructions: str
+
+@router.post("/agents/refine-prompt-ai")
+def refine_prompt_with_ai(payload: RefinePromptRequest, user=Depends(verify_token)):
+    """
+    Refine an existing prompt based on user instructions
+    
+    Example instructions:
+    - "Make it more friendly"
+    - "Add a section about handling complaints"
+    - "Make it shorter and more concise"
+    - "Add examples for appointment scheduling"
+    """
+    import anthropic
+    import os
+    
+    # Check if Anthropic API key is configured
+    ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="AI prompt refinement not configured. Please contact support."
+        )
+    
+    try:
+        # Initialize Anthropic client
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        
+        # Build the refinement prompt
+        refinement_prompt = f"""You are an expert at refining system prompts for voice AI agents.
+
+Here is the CURRENT PROMPT:
+
+---
+{payload.current_prompt}
+---
+
+USER'S REFINEMENT REQUEST:
+{payload.refinement_instructions}
+
+Please refine the prompt based on the user's request. Keep the overall structure and format, but apply the requested changes. Maintain the professional quality and voice-optimized nature of the prompt.
+
+Return the complete refined prompt:"""
+        
+        # Call Claude API
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4000,
+            messages=[
+                {"role": "user", "content": refinement_prompt}
+            ]
+        )
+        
+        # Extract the refined prompt
+        refined_prompt = message.content[0].text
+        
+        return {
+            "success": True,
+            "prompt": refined_prompt,
+            "original_length": len(payload.current_prompt),
+            "refined_length": len(refined_prompt),
+            "model_used": "claude-sonnet-4",
+            "tokens_used": message.usage.input_tokens + message.usage.output_tokens
+        }
+        
+    except anthropic.APIError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI refinement failed: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error refining prompt: {str(e)}"
+        )
+
+
 # ========== Legacy Prompt Generate Endpoint (for compatibility) ==========
 
 @router.post("/prompt/generate")
