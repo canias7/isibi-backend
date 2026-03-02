@@ -924,6 +924,17 @@ class GeneratePromptRequest(BaseModel):
     phone_number: Optional[str] = None
     address: Optional[str] = None
 
+class GeneratePromptAIRequest(BaseModel):
+    business_name: str
+    business_type: Optional[str] = "general"
+    business_description: Optional[str] = None
+    services: Optional[str] = None
+    tone: Optional[str] = "professional"
+    special_instructions: Optional[str] = None
+    hours: Optional[str] = None
+    phone_number: Optional[str] = None
+    address: Optional[str] = None
+
 @router.post("/agents/generate-prompt")
 def generate_ai_prompt(payload: GeneratePromptRequest, user=Depends(verify_token)):
     """
@@ -1413,6 +1424,110 @@ Your mission is to represent **{business_name}** professionally, handle calls ef
             "12. ENDING SCRIPT"
         ]
     }
+
+
+# ========== AI-Powered Prompt Generator (Using Claude) ==========
+
+@router.post("/agents/generate-prompt-ai")
+def generate_ai_prompt_with_claude(payload: GeneratePromptAIRequest, user=Depends(verify_token)):
+    """
+    Generate a custom system prompt using Claude AI
+    
+    This creates a high-quality, tailored prompt based on business details
+    """
+    import anthropic
+    import os
+    
+    # Check if Anthropic API key is configured
+    ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="AI prompt generation not configured. Please contact support."
+        )
+    
+    try:
+        # Initialize Anthropic client
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        
+        # Build the generation prompt
+        generation_prompt = f"""You are an expert at creating system prompts for voice AI receptionists and customer service agents.
+
+Generate a comprehensive, professional system prompt for a voice AI agent with these details:
+
+**Business Information:**
+- Business Name: {payload.business_name}
+- Business Type: {payload.business_type}
+- Description: {payload.business_description or 'Not provided'}
+- Services/Products: {payload.services or 'General services'}
+- Desired Tone: {payload.tone}
+- Hours: {payload.hours or 'Not specified'}
+- Phone: {payload.phone_number or 'Not specified'}
+- Address: {payload.address or 'Not specified'}
+
+**Special Instructions:**
+{payload.special_instructions or 'None'}
+
+**Requirements:**
+
+Create a complete system prompt that includes these sections:
+
+1. **ROLE & IDENTITY** - Clear definition of the AI's role
+2. **GREETING** - Exact first words to say when call connects (IMPORTANT: This must be said immediately when the call connects, without waiting for the caller)
+3. **PERSONALITY & TONE** - Voice characteristics matching "{payload.tone}"
+4. **SERVICES** - What the business offers
+5. **PRIMARY OBJECTIVES** - Key goals and responsibilities  
+6. **INFORMATION COLLECTION** - What customer details to gather
+7. **CONVERSATION FLOW** - How to handle different call types
+8. **BOUNDARIES** - What the AI can and cannot do
+9. **ESCALATION PROTOCOL** - When to transfer or take messages
+10. **EXAMPLE INTERACTIONS** - 2-3 realistic call scenarios
+
+**Important Guidelines:**
+- Make it natural for VOICE interactions (not text chat)
+- Be specific to {payload.business_name}
+- Include concrete examples
+- Use a {payload.tone} tone throughout
+- Make the greeting warm and professional
+- Specify exactly what information to collect
+- Include handling for angry/confused customers
+- Keep instructions clear and actionable
+- Format with clear markdown sections using ## headers
+
+Generate the complete system prompt now:"""
+        
+        # Call Claude API
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4000,
+            messages=[
+                {"role": "user", "content": generation_prompt}
+            ]
+        )
+        
+        # Extract the generated prompt
+        generated_prompt = message.content[0].text
+        
+        return {
+            "success": True,
+            "prompt": generated_prompt,
+            "business_name": payload.business_name,
+            "business_type": payload.business_type,
+            "tone": payload.tone,
+            "model_used": "claude-sonnet-4",
+            "tokens_used": message.usage.input_tokens + message.usage.output_tokens
+        }
+        
+    except anthropic.APIError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI generation failed: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating prompt: {str(e)}"
+        )
 
 
 # ========== Legacy Prompt Generate Endpoint (for compatibility) ==========
@@ -2065,6 +2180,10 @@ def set_agent_voice(agent_id: int, payload: dict, user=Depends(verify_token)):
     }
     """
     from db import get_conn, sql
+    import logging
+    
+    logger = logging.getLogger("main")
+    
     conn = get_conn()
     cur = conn.cursor()
     
@@ -2091,6 +2210,12 @@ def set_agent_voice(agent_id: int, payload: dict, user=Depends(verify_token)):
     
     openai_voice = payload.get("openai_voice") or "alloy"
     
+    logger.info(f"🎙️ Voice update request:")
+    logger.info(f"   Payload: {payload}")
+    logger.info(f"   Provider: {voice_provider}")
+    logger.info(f"   ElevenLabs ID: {elevenlabs_voice_id}")
+    logger.info(f"   OpenAI voice: {openai_voice}")
+    
     # If using ElevenLabs, make sure we have a voice ID
     if voice_provider == "elevenlabs" and not elevenlabs_voice_id:
         conn.close()
@@ -2103,6 +2228,7 @@ def set_agent_voice(agent_id: int, payload: dict, user=Depends(verify_token)):
     # When using ElevenLabs, set voice to None (it uses elevenlabs_voice_id)
     # When using OpenAI, set elevenlabs_voice_id to None (it uses voice)
     if voice_provider == "elevenlabs":
+        logger.info(f"🔄 Updating to ElevenLabs: {elevenlabs_voice_id}")
         cur.execute(sql("""
             UPDATE agents
             SET voice_provider = {PH},
@@ -2111,6 +2237,7 @@ def set_agent_voice(agent_id: int, payload: dict, user=Depends(verify_token)):
             WHERE id = {PH}
         """), (voice_provider, elevenlabs_voice_id, agent_id))
     else:  # OpenAI
+        logger.info(f"🔄 Updating to OpenAI: {openai_voice}")
         cur.execute(sql("""
             UPDATE agents
             SET voice_provider = {PH},
@@ -2120,6 +2247,20 @@ def set_agent_voice(agent_id: int, payload: dict, user=Depends(verify_token)):
         """), (voice_provider, openai_voice, agent_id))
     
     conn.commit()
+    
+    # Verify the update by reading back
+    cur.execute(sql("""
+        SELECT voice_provider, elevenlabs_voice_id, voice 
+        FROM agents 
+        WHERE id = {PH}
+    """), (agent_id,))
+    
+    updated = cur.fetchone()
+    logger.info(f"✅ Voice updated - Verification:")
+    logger.info(f"   voice_provider: {updated[0]}")
+    logger.info(f"   elevenlabs_voice_id: {updated[1]}")
+    logger.info(f"   voice: {updated[2]}")
+    
     conn.close()
     
     return {
